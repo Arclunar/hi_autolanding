@@ -18,6 +18,7 @@ Panels:
         - /规划轨迹的速度1
         - /小车实际位置1
         - /小车实际位置1/Shape1
+        - /tag实际位置1
       Splitter Ratio: 0.41470587253570557
     Tree Height: 588
   - Class: rviz/Selection
@@ -184,8 +185,8 @@ Visualization Manager:
             - Alpha: 1
               Autocompute Intensity Bounds: true
               Autocompute Value Bounds:
-                Max Value: 3.0250000953674316
-                Min Value: -0.125
+                Max Value: 3.625
+                Min Value: 0.4749999940395355
                 Value: true
               Axis: Z
               Channel Name: intensity
@@ -212,8 +213,8 @@ Visualization Manager:
             - Alpha: 1
               Autocompute Intensity Bounds: true
               Autocompute Value Bounds:
-                Max Value: 3.0250000953674316
-                Min Value: -0.125
+                Max Value: 3.625
+                Min Value: 0.4749999940395355
                 Value: true
               Axis: Z
               Channel Name: intensity
@@ -965,6 +966,41 @@ Visualization Manager:
       Topic: /vins_fusion/iris_true_odom/husky_odom
       Unreliable: false
       Value: true
+    - Angle Tolerance: 0.0010000000474974513
+      Class: rviz/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: true
+      Keep: 1
+      Name: tag实际位置
+      Position Tolerance: 0.0010000000474974513
+      Queue Size: 10
+      Shape:
+        Alpha: 1
+        Axes Length: 0.30000001192092896
+        Axes Radius: 0.20000000298023224
+        Color: 255; 25; 0
+        Head Length: 0.30000001192092896
+        Head Radius: 0.10000000149011612
+        Shaft Length: 1
+        Shaft Radius: 0.05000000074505806
+        Value: Axes
+      Topic: /vins_fusion/iris_true_odom/apriltag_odom
+      Unreliable: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -993,7 +1029,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/XYOrbit
-      Distance: 0.4503772258758545
+      Distance: 7.546189785003662
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -1001,17 +1037,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 0.40196701884269714
-        Y: -1.9177371263504028
+        X: 1.3597581386566162
+        Y: 0.6517857313156128
         Z: -0.9771959781646729
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5847971439361572
+      Pitch: 0.054798025637865067
       Target Frame: vision
-      Yaw: 4.365873336791992
+      Yaw: 4.075884819030762
     Saved: ~
 Window Geometry:
   Displays:
@@ -1030,4 +1066,4 @@ Window Geometry:
     collapsed: false
   Width: 1440
   X: 404
-  Y: 181
+  Y: 107

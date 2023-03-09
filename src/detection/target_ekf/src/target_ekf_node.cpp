@@ -312,8 +312,8 @@ int main(int argc, char** argv) {
   // 发布的里程计
   // yolo_odom_pub_ = nh.advertise<nav_msgs::Odometry>("yolo_odom", 1);
 
-  // 订阅的监测信息
-  april_odom_front = nh.advertise<nav_msgs::Odometry>("april_odom_front", 1);
+  // 发布的监测信息
+  april_odom_front = nh.advertise<nav_msgs::Odometry>("april_odom_front", 1); // 发布
   april_odom_down = nh.advertise<nav_msgs::Odometry>("april_odom_down", 1);
   int ekf_rate = 20;
   nh.getParam("ekf_rate", ekf_rate);

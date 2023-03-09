@@ -70,13 +70,16 @@ class Nodelet : public nodelet::Nodelet {
 
   // NOTE for mask target
   bool use_mask_ = true; // 默认是true
-  ros::Subscriber target_odom_sub_;
+  ros::Subscriber target_odom_sub_; // 订阅目标odom
   std::atomic_flag target_lock_ = ATOMIC_FLAG_INIT;
   Eigen::Vector3d target_odom_ , last_target_odom_;
   bool first_mapping=true;
 
   OccGridMap gridmap_;
   int inflate_size_;
+
+  std::atomic_bool target_received_ = ATOMIC_VAR_INIT(false); // 判断是否收到消息
+
 
 
   // 深度图和odom同步以后
@@ -162,7 +165,8 @@ class Nodelet : public nodelet::Nodelet {
     
     // NOTE use mask
     // 将小车位置上的珊格设为最低概率
-    if (use_mask_) {  // mask target
+    if (use_mask_ and target_received_)
+    { // mask target
 
       Eigen::Vector3d ld;
       Eigen::Vector3d ru;
@@ -189,7 +193,7 @@ class Nodelet : public nodelet::Nodelet {
         // gridmap_.setFree(ld, ru);
         gridmap_.setFree(ld, ru);
         ROS_WARN("CLEAR OPPCUPIED VER2 !!! ");
-        }
+      }
 
       // 这一次的设为占据
       ld = target_odom_;
@@ -201,10 +205,10 @@ class Nodelet : public nodelet::Nodelet {
       ru.y() += 0.5;
       ru.z() += 0.2; // 提高0.2
       // gridmap_.setFree(ld, ru);
-      gridmap_.setOccupied(ld,ru);
+      gridmap_.setOccupied(ld, ru);
       ROS_WARN("SET OPPCUPIED !!! ");
-      
-      last_target_odom_=target_odom_;
+
+      last_target_odom_ = target_odom_;
       target_lock_.clear();
     }
 
@@ -244,6 +248,7 @@ class Nodelet : public nodelet::Nodelet {
   void target_odom_callback(const nav_msgs::OdometryConstPtr& msgPtr) {
     while (target_lock_.test_and_set())
       ;
+    target_received_ = true;
     target_odom_.x() = msgPtr->pose.pose.position.x;
     target_odom_.y() = msgPtr->pose.pose.position.y;
     target_odom_.z() = msgPtr->pose.pose.position.z;

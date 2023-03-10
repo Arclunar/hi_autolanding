@@ -192,18 +192,18 @@ class Nodelet : public nodelet::Nodelet {
         ru.z() += 1;
         // gridmap_.setFree(ld, ru);
         gridmap_.setFree(ld, ru);
-        ROS_WARN("CLEAR OPPCUPIED VER2 !!! ");
+        // ROS_WARN("CLEAR OPPCUPIED VER2 !!! ");
       }
 
       // 这一次的设为占据
       ld = target_odom_;
       ru = target_odom_;
-      ld.x() -= 0.5;
-      ld.y() -= 0.5;
+      ld.x() -= 0.3;
+      ld.y() -= 0.3;
       ld.z() -= 1.0;
-      ru.x() += 0.5;
-      ru.y() += 0.5;
-      ru.z() += 0.2; // 提高0.2
+      ru.x() += 0.3;
+      ru.y() += 0.3;
+      ru.z() += 0.05 ; // 提高0.2
       // gridmap_.setFree(ld, ru);
       gridmap_.setOccupied(ld, ru);
       ROS_WARN("SET OPPCUPIED !!! ");

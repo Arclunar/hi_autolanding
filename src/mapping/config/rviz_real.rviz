@@ -15,11 +15,11 @@ Panels:
         - /小车估计位置1
         - /小车估计位置1/Shape1
         - /Odometry1/Shape1
-        - /规划轨迹的速度1
-        - /小车实际位置1
         - /小车实际位置1/Shape1
-        - /tag实际位置1
-      Splitter Ratio: 0.41470587253570557
+        - /规划轨迹的加速度1
+        - /飞机实际轨迹1
+        - /飞机实际轨迹2
+      Splitter Ratio: 0.49444442987442017
     Tree Height: 588
   - Class: rviz/Selection
     Name: Selection
@@ -31,7 +31,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: local_inflate_map
+    SyncSource: ""
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -185,8 +185,8 @@ Visualization Manager:
             - Alpha: 1
               Autocompute Intensity Bounds: true
               Autocompute Value Bounds:
-                Max Value: 3.625
-                Min Value: 0.4749999940395355
+                Max Value: 3.2750000953674316
+                Min Value: 0.125
                 Value: true
               Axis: Z
               Channel Name: intensity
@@ -213,8 +213,8 @@ Visualization Manager:
             - Alpha: 1
               Autocompute Intensity Bounds: true
               Autocompute Value Bounds:
-                Max Value: 3.625
-                Min Value: 0.4749999940395355
+                Max Value: 3.2750000953674316
+                Min Value: 0.125
                 Value: true
               Axis: Z
               Channel Name: intensity
@@ -948,7 +948,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: true
-      Enabled: true
+      Enabled: false
       Keep: 1
       Name: 小车实际位置
       Position Tolerance: 0.0010000000474974513
@@ -965,7 +965,7 @@ Visualization Manager:
         Value: Axes
       Topic: /vins_fusion/iris_true_odom/husky_odom
       Unreliable: false
-      Value: true
+      Value: false
     - Angle Tolerance: 0.0010000000474974513
       Class: rviz/Odometry
       Covariance:
@@ -1001,6 +1001,30 @@ Visualization Manager:
       Topic: /vins_fusion/iris_true_odom/apriltag_odom
       Unreliable: false
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /traj_vis_acc
+      Name: 规划轨迹的加速度
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: false
+      Marker Topic: /traj_vis_real
+      Name: 飞机实际轨迹
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: false
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /traj_vis_real_line
+      Name: 飞机实际轨迹
+      Namespaces:
+        traj_node/real_traj: true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -1029,7 +1053,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/XYOrbit
-      Distance: 7.546189785003662
+      Distance: 9.613645553588867
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -1037,17 +1061,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 1.3597581386566162
-        Y: 0.6517857313156128
-        Z: -0.9771959781646729
+        X: 2.139688014984131
+        Y: 2.1446590423583984
+        Z: -0.9771957993507385
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.054798025637865067
+      Pitch: 0.3697972297668457
       Target Frame: vision
-      Yaw: 4.075884819030762
+      Yaw: 4.3308610916137695
     Saved: ~
 Window Geometry:
   Displays:
@@ -1065,5 +1089,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1440
-  X: 404
-  Y: 107
+  X: 122
+  Y: 145

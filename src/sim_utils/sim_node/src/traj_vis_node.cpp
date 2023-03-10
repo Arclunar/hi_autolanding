@@ -6,6 +6,7 @@
 #include <quadrotor_msgs/PolyTraj.h>
 #include <Eigen/Eigen>
 #include <traj_opt/poly_traj_utils.hpp>
+#include"gazebo_msgs/GetModelState.h"
 
 
 
@@ -14,12 +15,20 @@
 double _vis_traj_width =0.1;
 ros::Publisher _vel_traj_vis_pub;
 ros::Publisher _acc_traj_vis_pub;
+ros::Publisher real_traj_vis_pub;
+ros::Publisher real_traj_line_vis_pub;
 ros::Subscriber traj_msg_sub;
+ros::Subscriber robot_state_sub; // 获取飞机的位置
 visualization_msgs::Marker pos_marker;
 visualization_msgs::Marker vel_marker;
 visualization_msgs::Marker acc_marker;
-quadrotor_msgs::PolyTraj trajMsg;
+visualization_msgs::Marker real_pos_marker;
+visualization_msgs::Marker real_traj_marker;
 
+quadrotor_msgs::PolyTraj trajMsg;
+ros::ServiceClient state_client;
+int real_traj_vis_hz = 10;
+ros::Timer get_state_timer;
 
 
 // 类型定义
@@ -38,6 +47,7 @@ void setMarkerArrowSize(visualization_msgs::Marker & marker,double size);
 void setMarkerArrowOrientation(visualization_msgs::Marker & marker,Eigen::Vector3d start_pos,Eigen::Vector3d end_pos);
 
 Eigen::Vector3d getPosPoly( Eigen::MatrixXd polyCoeff, double t );
+void real_state_timer_callback(const ros::TimerEvent& event);
 
 
 
@@ -49,11 +59,41 @@ int main(int argc, char *argv[])
     ros::NodeHandle nh;
 
     // 订阅轨迹
-    traj_msg_sub = nh.subscribe("/drone0/trajectory", 5, TrajCallback); //订阅规划出来的多项式
+    traj_msg_sub = nh.subscribe("/drone0/trajectory", 5, &TrajCallback); //订阅规划出来的多项式
+
+    // 发布消息
     _vel_traj_vis_pub = nh.advertise<visualization_msgs::MarkerArray>("traj_vis_vel",1);
     _acc_traj_vis_pub = nh.advertise<visualization_msgs::MarkerArray>("traj_vis_acc",1);
 
+    get_state_timer = nh.createTimer(ros::Duration(1.0 / real_traj_vis_hz), &real_state_timer_callback);
+    state_client=nh.serviceClient<gazebo_msgs::GetModelState>("/gazebo/get_model_state");
+
+    real_traj_vis_pub  = nh.advertise<visualization_msgs::Marker>("traj_vis_real",1);
+    real_traj_line_vis_pub  = nh.advertise<visualization_msgs::Marker>("traj_vis_real_line",1);
+
+
     // 初始化marker
+    // real traj
+    real_pos_marker.header.stamp = ros::Time::now();
+    real_pos_marker.header.frame_id = "world";
+    real_pos_marker.ns="traj_node/trajectory_waypoints";
+    real_pos_marker.id = 0;
+    real_pos_marker.type = visualization_msgs::Marker::SPHERE;
+    real_pos_marker.action = visualization_msgs::Marker::ADD;
+    setMarkerScale(real_pos_marker, 0.02,0.02,0.02);
+    setMarkerColor(real_pos_marker,1,1,0.5,0 ); // orange
+
+    real_traj_marker.header.stamp = ros::Time::now();
+    real_traj_marker.header.frame_id = "world";
+    real_traj_marker.ns="traj_node/real_traj";
+    real_traj_marker.id = 0;
+    real_traj_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    real_traj_marker.action = visualization_msgs::Marker::ADD;
+    setMarkerScale(real_traj_marker, 0.02,0.02,0.02);
+    setMarkerColor(real_traj_marker,1,0,1,0 ); // green
+
+    real_traj_marker.points.clear();
+
 
     // velocity
     vel_marker.header.stamp = ros::Time::now();
@@ -72,6 +112,39 @@ int main(int argc, char *argv[])
     ros::spin();
 
 }
+
+void real_state_timer_callback(const ros::TimerEvent& event)
+{
+    //TODO 获取位置
+
+    gazebo_msgs::GetModelState srv;
+    srv.request.model_name = "iris"; //指定要获取的机器人在gazebo中的名字；
+    if (state_client.call(srv))
+    {
+        //TODO 发布marker
+
+        
+        setMarkerPosition(real_pos_marker, srv.response.pose.position.x, srv.response.pose.position.y, srv.response.pose.position.z);
+        real_pos_marker.id +=1;
+        real_traj_vis_pub.publish(real_pos_marker);
+
+
+        geometry_msgs::Point pos;
+        pos.x=srv.response.pose.position.x;
+        pos.y=srv.response.pose.position.y;
+        pos.z=srv.response.pose.position.z;
+        real_traj_marker.points.push_back(pos);
+        real_traj_line_vis_pub.publish(real_traj_marker);
+        
+        ROS_INFO("publish real pos !");
+    }
+    else
+    {
+        ROS_ERROR("Failed to call service /gazebo/get_model_state for iris");
+    }
+
+}
+
 
 
 void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
@@ -142,17 +215,17 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
 
         vel_marker.points[0].x=p.x();
-        vel_marker.points[0].y=p.y();
+        vel_marker.points[0].y=p.y() - 1.0;  // NOTE : 在旁边可视化出来
         vel_marker.points[0].z=p.z();
         vel_marker.points[1].x= p.x()+ 0.05 * v.x();
-        vel_marker.points[1].y= p.y()+ 0.05 * v.y();
+        vel_marker.points[1].y= p.y()+ 0.05 * v.y() - 1.0;
         vel_marker.points[1].z= p.z()+ 0.05 * v.z();
 
         acc_marker.points[0].x=p.x();
-        acc_marker.points[0].y=p.y();
+        acc_marker.points[0].y=p.y() - 2.0;
         acc_marker.points[0].z=p.z();
         acc_marker.points[1].x= p.x()+ 0.05 * a.x();
-        acc_marker.points[1].y= p.y()+ 0.05 * a.y();
+        acc_marker.points[1].y= p.y()+ 0.05 * a.y() - 2.0;
         acc_marker.points[1].z= p.z()+ 0.05 * a.z();
         
         vel_list_msg.markers.push_back(vel_marker);

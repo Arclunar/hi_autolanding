@@ -39,6 +39,14 @@
 #include "RapidTrajectoryGenerator.h"
 // using namespace OBVP;
 
+// 任务
+#include <std_msgs/String.h>
+#include "sim_node/task_state.h"
+
+sim_node::task_state task_state_msg;
+sim_node::task_state set_task_msg;
+std::atomic_flag set_task_lock_ = ATOMIC_FLAG_INIT; // clear状态,既不是true，也不是false
+
 
 // log added
 // 任务流程状态机
@@ -50,6 +58,7 @@ enum TASK_STATE{
     LANDING, // 过渡
     CALI , // 末端校正
     DEBUG , // 用来debug
+    LANDED,
   };
 // 任务状态
 
@@ -68,8 +77,12 @@ class Nodelet : public nodelet::Nodelet {
   ros::Timer plan_timer_;
 
   ros::Publisher traj_pub_, heartbeat_pub_, replanState_pub_;
-  ros::Publisher relay_pub_, motors_pub_;
-  // relay 继电器
+  ros::Publisher relay_pub_, motors_pub_;   // relay 继电器
+
+  ros::Publisher task_state_pub_;
+  ros::Subscriber set_task_sub_;
+
+
 
   double last_yaw_;
 
@@ -192,6 +205,37 @@ class Nodelet : public nodelet::Nodelet {
     triger_received_ = true;
   }
 
+  void set_task_callback(const sim_node::task_stateConstPtr& msgPtr)
+  {
+    while(set_task_lock_.test_and_set()) ;
+    set_task_msg = *msgPtr;
+    switch(set_task_msg.state_id)
+    {
+      case sim_node::task_state::TASK_READY:
+        task_state=READY;
+        break;
+      case sim_node::task_state::TRACK:
+        task_state=TRACK;
+        break;
+      case sim_node::task_state::LADNING:
+        task_state=LANDING;
+        break;
+      case sim_node::task_state::CALIBRATION:
+        task_state=CALI;
+        break;
+      case sim_node::task_state::LANDED:
+        task_state=LANDED;
+        break;
+      case sim_node::task_state::DEBUG:
+        task_state=DEBUG;
+        break;
+      default:
+        ROS_ERROR("NOT A VALID TASK STATE!!!!");
+        break;
+    }
+    set_task_lock_.clear();
+  }
+
   // 确认降落的位姿
   void land_triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     land_p_.x() = msgPtr->pose.position.x;
@@ -253,17 +297,15 @@ class Nodelet : public nodelet::Nodelet {
 
 //! 重点，由规划定时器触发的回调函数
   // NOTE main callback
-  void plan_timer_callback(const ros::TimerEvent& event) {
-
-    heartbeat_pub_.publish(std_msgs::Empty()); 
+void plan_timer_callback(const ros::TimerEvent& event) {
+    heartbeat_pub_.publish(std_msgs::Empty()); // planner heartbeat
     if (!odom_received_ || !map_received_) { // no odom or no map planner not work
       ROS_INFO("[ planner ] no odom or no map received");
       return;
     }
 
     // obtain state of odom
-    while (odom_lock_.test_and_set()) 
-      ;
+    while (odom_lock_.test_and_set()) ;
     auto odom_msg = odom_msg_; 
     odom_lock_.clear(); 
 
@@ -279,16 +321,20 @@ class Nodelet : public nodelet::Nodelet {
                               odom_msg.pose.pose.orientation.y,
                               odom_msg.pose.pose.orientation.z);
 
+
     if (!triger_received_) { // no track trigger
       ROS_INFO("[ planner ] watting for trigger for uav");
+      task_state = NOT_READY;
       return;
     }
+
+    task_state = READY ;
+
     if (!target_received_) { // no target in view
       ROS_INFO("[ planner ] watting for landing target");
       return;
     }
     // NOTE obtain state of target 
-    // 
     while (target_lock_.test_and_set())
       ;
     replanStateMsg_.target = target_msg_; 
@@ -314,11 +360,11 @@ class Nodelet : public nodelet::Nodelet {
 
     // NOTE just for landing on the car of YTK! 
     if (land_triger_received_) {  // landing
-        turn_on_relay(); 
+        // turn_on_relay(); 
       // NOTE turn on the magnet and stop the motors!
       // ROS_INFO("odom_z = %f,target_z = %f,minus = %f",odom_p.z(),target_p.z(),(odom_p - target_p).z());
       
-      //test landed
+      //test if landed
       static int count_laser = 0;
       if( dis_laser_mm < 120 && dis_laser_mm > 5 ) // 如果底部激光探测到这个距离，说明接触到了物体，贴上去
       {
@@ -339,19 +385,18 @@ class Nodelet : public nodelet::Nodelet {
         // 完成降落
         landing_finished_ = true;
         ROS_WARN("[planner] LANDING FINISHED!");
-        return ;
       }
 
       if (landing_finished_)  // landed
       {
-        // stop_motors(); //发布停止电机的消息
+        stop_motors(); //发布停止电机的消息
         ROS_WARN("[planner] has landed at the landing position");
         return;
       }
       else // landing 
       {
         // log 注释掉降落过程
-        // in_landing_process(); // 将motor的状态改为TRUST_ADJUST_BY_LASER
+        in_landing_process(); // 将motor的状态改为TRUST_ADJUST_BY_LASER
       }
 
 
@@ -366,10 +411,10 @@ class Nodelet : public nodelet::Nodelet {
       }
 
       // TODO get the orientation fo target and calculate the pose of landing point
-      target_p = target_p + target_q * land_p_; // 降落时的轨迹的终点位置，land_p_是相对于车的降落点
+      target_p = target_p + target_q * land_p_; // 降落时的轨迹的终点位置，land_p_是相对于车的降落点，只有faketarget时才有后两项
       wait_hover_ = false; // 还没足够进，不要悬停
 
-      target_p.z()+= 1; // 飞到上面1米处
+      // target_p.z()+= 1; // 飞到上面1米处
       // end of if(land_triger_received_) 
     } 
     
@@ -514,6 +559,7 @@ class Nodelet : public nodelet::Nodelet {
       finState.setZero(3, 3);
       finState.col(0) = path.back(); // 轨迹的终点
       finState.col(1) = target_v; // 和目标一样的速度
+      finState.col(1).z()+=-0.5; // 末端添加一个向下的速度
 
       if (land_triger_received_) {
         finState.col(0) = target_predcit.back(); //如果收到降落信号，则终点是和目标一样的位置
@@ -581,6 +627,34 @@ class Nodelet : public nodelet::Nodelet {
     visPtr_->visualize_traj(traj, "traj"); // 可视化轨迹，发布的话题名称为traj，对应航点为traj_wpts
     
 
+    // 发布task消息
+    task_state_msg.header.stamp=ros::Time::now();
+    switch(task_state)
+    {
+      case NOT_READY:
+        task_state_msg.state="NOT_READY";
+        break;
+      case READY:
+        task_state_msg.state="REDAY";
+        break;
+      case TRACK:
+        task_state_msg.state="TRACK";
+        break;
+      case LANDING:
+        task_state_msg.state="LANDING";
+        break;
+      case CALI:
+        task_state_msg.state="CALIBRATION";
+        break;
+      case LANDED:
+        task_state_msg.state="LANDED";
+        break;
+      case DEBUG:
+        task_state_msg.state="DEBUG";
+        break;
+      default:break;
+    }
+    task_state_pub_.publish(task_state_msg);
     }
   }
 
@@ -929,6 +1003,10 @@ class Nodelet : public nodelet::Nodelet {
 
     relay_pub_ = nh.advertise<std_msgs::Bool>("/relayctrl_node/cmd", 1); // 控制电磁继电器
     motors_pub_ = nh.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land", 1); // 控制马达
+
+    // ***************** 任务控制和反馈
+    task_state_pub_ =nh.advertise<sim_node::task_state>("/task_state",1);
+    set_task_sub_ = nh.subscribe<sim_node::task_state>("/set_task_state",1, &Nodelet::set_task_callback, this, ros::TransportHints().tcpNoDelay());
 
     if (debug_) {
       plan_timer_ = nh.createTimer(ros::Duration(1.0 / plan_hz), &Nodelet::debug_timer_callback, this);

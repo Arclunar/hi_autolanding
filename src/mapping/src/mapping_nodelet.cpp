@@ -201,12 +201,12 @@ class Nodelet : public nodelet::Nodelet {
       ld.x() -= 0.3;
       ld.y() -= 0.3;
       ld.z() -= 1.0;
-      ru.x() += 0.3;
+      ru.x() -= 0.1;
       ru.y() += 0.3;
-      ru.z() += 0.05 ; // 提高0.2
+      ru.z() -= 0.05 ; // 提高0.2
       // gridmap_.setFree(ld, ru);
       gridmap_.setOccupied(ld, ru);
-      ROS_WARN("SET OPPCUPIED !!! ");
+      // ROS_WARN("SET OPPCUPIED !!! ");
 
       last_target_odom_ = target_odom_;
       target_lock_.clear();

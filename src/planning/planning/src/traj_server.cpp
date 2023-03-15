@@ -125,7 +125,7 @@ void polyTrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
 void cmdCallback(const ros::TimerEvent &e) {
   if (!receive_traj_) { //  没收到规划出来的路径
-    ROS_INFO("[Traj server]:cmdCallback not received traj");
+    // ROS_INFO("[Traj server]:cmdCallback not received traj");
     return;
   }
   ros::Time time_now = ros::Time::now();

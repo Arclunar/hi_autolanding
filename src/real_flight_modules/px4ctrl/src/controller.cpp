@@ -39,22 +39,28 @@ quadrotor_msgs::Px4ctrlDebug Controller::update_alg0(
     ROS_WARN("[px4ctrl] Desired z-Velocity = %6.3fm/s, < -3.0m/s, which is dangerous since the drone will be unstable!", des.v(2));
 
   // Compute desired control commands
-  const Eigen::Vector3d pid_error_accelerations = computePIDErrorAcc(odom, des, param);
-  Eigen::Vector3d translational_acc = pid_error_accelerations + des.a;
+  // 
+  const Eigen::Vector3d pid_error_accelerations = computePIDErrorAcc(odom, des, param); 
+  Eigen::Vector3d translational_acc = pid_error_accelerations + des.a; // 前馈加反馈得到一个期望的加速度
+
+
   Eigen::Quaterniond desired_attitude;
   double thrust;
-  translational_acc = (Gravity + computeLimitedTotalAccFromThrustForce(translational_acc - Gravity, 1.0)).eval();
+
+  // 限制了飞机的倾角
+  translational_acc = (Gravity + computeLimitedTotalAccFromThrustForce(translational_acc - Gravity, 1.0)).eval(); // 质量设置为1，把速度加回去，eval是计算的意思而已
   minimumSingularityFlatWithDrag(param.mass, param.gra,
                                  des.v, translational_acc, des.j, des.yaw, des.yaw_rate,
-                                 odom.q, desired_attitude, u.bodyrates, thrust);
+                                 odom.q, desired_attitude, u.bodyrates, thrust); //解算出来推力和姿态，turust和desiresd_attitude
 
-  Eigen::Vector3d thrustforce = desired_attitude * (thrust * Eigen::Vector3d::UnitZ());
-  Eigen::Vector3d total_des_acc = computeLimitedTotalAccFromThrustForce(thrustforce, param.mass);
+  Eigen::Vector3d thrustforce = desired_attitude * (thrust * Eigen::Vector3d::UnitZ()); // 推力
+  Eigen::Vector3d total_des_acc = computeLimitedTotalAccFromThrustForce(thrustforce, param.mass); // 限制倾角
 
-  u.thrust = computeDesiredCollectiveThrustSignal(odom.q, odom.v, total_des_acc, param, voltage);
+  u.thrust = computeDesiredCollectiveThrustSignal(odom.q, odom.v, total_des_acc, param, voltage); // 计算油门信号
 
   const Eigen::Vector3d feedback_bodyrates = computeFeedBackControlBodyrates(desired_attitude, odom.q, param);
 
+  // 输出的debu
   debug.fb_a_x = pid_error_accelerations(0); //debug
   debug.fb_a_y = pid_error_accelerations(1);
   debug.fb_a_z = pid_error_accelerations(2);
@@ -66,54 +72,57 @@ quadrotor_msgs::Px4ctrlDebug Controller::update_alg0(
   debug.des_q_y = desired_attitude.y();
   debug.des_q_z = desired_attitude.z();
 
-  u.q = imu.q * odom.q.inverse() * desired_attitude; // Align with FCU frame
-  const Eigen::Vector3d bodyrate_candidate = u.bodyrates + feedback_bodyrates;
+  // 对齐fcu的坐标， odom.q.inverse() * desired_attitude 是期望姿态和当前姿态的旋转，这里切换成从fcu转过去的最终姿态
+  u.q = imu.q * odom.q.inverse() * desired_attitude; // Align with FCU frame， 
+  const Eigen::Vector3d bodyrate_candidate = u.bodyrates + feedback_bodyrates; // 
 
-  // limit the angular acceleration
+  // limit the angular acceleration 角加速度，也就是限制角度变化量
   u.bodyrates = computeLimitedAngularAcc(bodyrate_candidate);
   // u.bodyrates += feedback_bodyrates;
 
   // Used for thrust-accel mapping estimation
-  timed_thrust.push(std::pair<ros::Time, double>(ros::Time::now(), u.thrust));
-  while (timed_thrust.size() > 100)
+  timed_thrust.push(std::pair<ros::Time, double>(ros::Time::now(), u.thrust)); // push进油门
+  while (timed_thrust.size() > 100) // 只要100个数据
     timed_thrust.pop();
 
-  return debug; //debug
+  return debug; //debug 返回debug信息
 };
 
+// 限制了飞机倾角的推力提供的加速度
 Eigen::Vector3d Controller::computeLimitedTotalAccFromThrustForce(
     const Eigen::Vector3d &thrustforce,
     const double &mass) const
 {
-  Eigen::Vector3d total_acc = thrustforce / mass;
+  Eigen::Vector3d total_acc = thrustforce / mass; // 推力提供的加速度
 
   // Limit magnitude
-  if (total_acc.norm() < kMinNormalizedCollectiveAcc_)
+  if (total_acc.norm() < kMinNormalizedCollectiveAcc_) // 限制最小加速度
   {
     total_acc = total_acc.normalized() * kMinNormalizedCollectiveAcc_;
   }
 
   // Limit angle
-  if (param.max_angle > 0)
+  if (param.max_angle > 0)  // 限制飞机和z轴的倾角
   {
-    double z_acc = total_acc.dot(Eigen::Vector3d::UnitZ());
-    Eigen::Vector3d z_B = total_acc.normalized();
+    double z_acc = total_acc.dot(Eigen::Vector3d::UnitZ()); // z方向加速度
+    Eigen::Vector3d z_B = total_acc.normalized();  // 推力方向
     if (z_acc < kMinNormalizedCollectiveAcc_)
     {
-      z_acc = kMinNormalizedCollectiveAcc_; // Not allow too small z-force when angle limit is enabled.
+      z_acc = kMinNormalizedCollectiveAcc_; // Not allow too small z-force when angle limit is enabled. // z方向推力不能太小 
     }
     Eigen::Vector3d rot_axis = Eigen::Vector3d::UnitZ().cross(z_B).normalized();
-    double rot_ang = std::acos(Eigen::Vector3d::UnitZ().dot(z_B) / (1 * 1));
-    if (rot_ang > param.max_angle) // Exceed the angle limit
+    double rot_ang = std::acos(Eigen::Vector3d::UnitZ().dot(z_B) / (1 * 1)); // 
+    if (rot_ang > param.max_angle) // Exceed the angle limit // 如果超过了角度
     {
-      Eigen::Vector3d limited_z_B = Eigen::AngleAxisd(param.max_angle, rot_axis) * Eigen::Vector3d::UnitZ();
-      total_acc = z_acc / std::cos(param.max_angle) * limited_z_B;
+      Eigen::Vector3d limited_z_B = Eigen::AngleAxisd(param.max_angle, rot_axis) * Eigen::Vector3d::UnitZ(); // 旋转到最大角度限制下的转轴
+      total_acc = z_acc / std::cos(param.max_angle) * limited_z_B; // 保持z方向的加速度不变，限制角度
     }
   }
 
-  return total_acc;
+  return total_acc; 
 }
 
+// 带空气阻力的微分平坦
 bool Controller::flatnessWithDrag(const Eigen::Vector3d &vel,
                                   const Eigen::Vector3d &acc,
                                   const Eigen::Vector3d &jer,
@@ -251,22 +260,22 @@ void Controller::minimumSingularityFlatWithDrag(const double mass,
   const double veps = 0.02; //ms^-s
 
   static Eigen::Vector3d omg_old(0.0, 0.0, 0.0);
-  static double thrust_old = mass * (acc + grav * Eigen::Vector3d::UnitZ()).norm();
+  static double thrust_old = mass * (acc + grav * Eigen::Vector3d::UnitZ()).norm(); // 补偿掉重力加速度的推力，acc是translational_accelaration
 
   Eigen::Vector4d quat;
   if (flatnessWithDrag(vel, acc, jer, yaw, yawd,
                        thrust, quat, omg,
-                       mass, grav, dh, dv, cp, veps))
+                       mass, grav, dh, dv, cp, veps)) // 推力和姿态算出来了
   {
     att = Eigen::Quaterniond(quat(0), quat(1), quat(2), quat(3));
     omg_old = omg;
     thrust_old = thrust;
   }
   else
-  {
+  { 
     ROS_WARN("Conor case: 1. Eactly inverted flight or 2. Unactuated falling");
-    att = att_est;
-    omg = omg_old;
+    att = att_est; // 推出来不对，用里程计 odom.q
+    omg = omg_old; // 用旧的
     thrust = thrust_old;
   }
 
@@ -685,7 +694,7 @@ Eigen::Vector3d Controller::computePIDErrorAcc(
   Eigen::Vector3d acc_error;
 
   // x acceleration
-  double x_pos_error = std::isnan(des.p(0)) ? 0.0 : std::max(std::min(des.p(0) - odom.p(0), 1.0), -1.0);
+  double x_pos_error = std::isnan(des.p(0)) ? 0.0 : std::max(std::min(des.p(0) - odom.p(0), 1.0), -1.0); // 限制在正负1
   double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error) - odom.v(0), 1.0), -1.0);
   acc_error(0) = Kv(0) * x_vel_error;
 
@@ -744,15 +753,15 @@ Eigen::Vector3d Controller::computeLimitedTotalAcc(
 Eigen::Vector3d Controller::computeLimitedAngularAcc(const Eigen::Vector3d candidate_bodyrate)
 {
   ros::Time t_now = ros::Time::now();
-  if ( last_ctrl_timestamp_ != ros::Time(0) )
+  if ( last_ctrl_timestamp_ != ros::Time(0) ) // 不是最开始
   {
-    double dura = (t_now - last_ctrl_timestamp_).toSec();
-    double max_delta_bodyrate = kMaxAngularAcc_ * dura;
+    double dura = (t_now - last_ctrl_timestamp_).toSec(); 
+    double max_delta_bodyrate = kMaxAngularAcc_ * dura; // 计算最大的角速度变化量
     Eigen::Vector3d bodyrate_out;
 
     if ( (candidate_bodyrate(0) - last_bodyrate_(0)) > max_delta_bodyrate )
     {
-      bodyrate_out(0) = last_bodyrate_(0) + max_delta_bodyrate;
+      bodyrate_out(0) = last_bodyrate_(0) + max_delta_bodyrate; // 限制变化量
     }
     else if( (candidate_bodyrate(0) - last_bodyrate_(0)) < -max_delta_bodyrate )
     {
@@ -794,7 +803,7 @@ Eigen::Vector3d Controller::computeLimitedAngularAcc(const Eigen::Vector3d candi
 
     return bodyrate_out;
   }
-  else
+  else // 最开始
   {
     last_ctrl_timestamp_ = t_now;
     last_bodyrate_ = candidate_bodyrate;
@@ -804,16 +813,16 @@ Eigen::Vector3d Controller::computeLimitedAngularAcc(const Eigen::Vector3d candi
 }
 
 double Controller::computeDesiredCollectiveThrustSignal(
-    const Eigen::Quaterniond &est_q,
-    const Eigen::Vector3d &est_v,
-    const Eigen::Vector3d &des_acc,
+    const Eigen::Quaterniond &est_q, // odom.q
+    const Eigen::Vector3d &est_v,  // odom.v
+    const Eigen::Vector3d &des_acc, // total_desired_acc
     const Parameter_t &param,
     double voltage)
 {
 
-  double normalized_thrust;
-  const Eigen::Vector3d body_z_axis = est_q * Eigen::Vector3d::UnitZ();
-  double des_acc_norm = des_acc.dot(body_z_axis);
+  double normalized_thrust; // N / kg
+  const Eigen::Vector3d body_z_axis = est_q * Eigen::Vector3d::UnitZ(); // 机体坐标系z轴
+  double des_acc_norm = des_acc.dot(body_z_axis); // 期望加速度方向和当前z轴方向
   // double des_acc_norm = des_acc.norm();
   if (des_acc_norm < kMinNormalizedCollectiveAcc_)
   {
@@ -822,7 +831,7 @@ double Controller::computeDesiredCollectiveThrustSignal(
 
   // This compensates for an acceleration component in thrust direction due
   // to the square of the body-horizontal velocity.
-  des_acc_norm -= param.rt_drag.k_thrust_horz * (pow(est_v.x(), 2.0) + pow(est_v.y(), 2.0));
+  des_acc_norm -= param.rt_drag.k_thrust_horz * (pow(est_v.x(), 2.0) + pow(est_v.y(), 2.0)); // 设为0了
 
   debug.des_thr = des_acc_norm; //debug
 
@@ -832,7 +841,7 @@ double Controller::computeDesiredCollectiveThrustSignal(
   }
   else
   {
-    normalized_thrust = des_acc_norm / thr2acc;
+    normalized_thrust = des_acc_norm / thr2acc; // acc -> thrust
   }
 
   return normalized_thrust;
@@ -875,6 +884,8 @@ bool Controller::almostZeroThrust(const double thrust_value) const
   return fabs(thrust_value) < kAlmostZeroThrustThreshold_;
 }
 
+
+// 估计油门模型
 bool Controller::estimateThrustModel(
     const Eigen::Vector3d &est_a,
     const double voltage,
@@ -900,11 +911,11 @@ bool Controller::estimateThrustModel(
     }
 
     /***********************************************************/
-    /* Recursive least squares algorithm with vanishing memory */
+    /* Recursive least squares algorithm with vanishing memory */ // 递归最小二乘法
     /***********************************************************/
     double thr = t_t.second;
     timed_thrust.pop();
-    if (param.thr_map.accurate_thrust_model)
+    if (param.thr_map.accurate_thrust_model) 
     {
       /**************************************************************************/
       /* Model: thr = thr_scale_compensate * AccurateThrustAccMapping(est_a(2)) */
@@ -933,22 +944,24 @@ bool Controller::estimateThrustModel(
         ROS_WARN("thr_scale_compensate = %f", thr_scale_compensate);
       }
     }
-    else
+    else // 用的else
     {
       /***********************************/
       /* Model: est_a(2) = thr2acc * thr */
       /***********************************/
-      double gamma = 1 / (rho2 + thr * P * thr);
+      // 参考文章 https://blog.csdn.net/u012057432/article/details/125836404
+      // rho2就是文章里面的lambda，x是油门thr，w是thr2acc
+      double gamma = 1 / (rho2 + thr * P * thr); 
       double K = gamma * P * thr;
-      thr2acc = thr2acc + K * (est_a(2) - thr * thr2acc);
+      thr2acc = thr2acc + K * (est_a(2) - thr * thr2acc); // 估计的a和实际的a作差得到误差，第推求戒
       P = (1 - K * thr) * P / rho2;
       //printf("%6.3f,%6.3f,%6.3f,%6.3f\n", thr2acc, gamma, K, P);
       //fflush(stdout);
-      const double hover_percentage = param.gra / thr2acc;
+      const double hover_percentage = param.gra / thr2acc; // hover_percentage 实际上就是归一化油门
       if (hover_percentage > 0.8 || hover_percentage < 0.1)
       {
         ROS_ERROR("Estimated hover_percentage >0.8 or <0.1! Perhaps the accel vibration is too high!");
-        thr2acc = hover_percentage > 0.8 ? param.gra / 0.8 : thr2acc;
+        thr2acc = hover_percentage > 0.8 ? param.gra / 0.8 : thr2acc; // 限制在0.8里
         thr2acc = hover_percentage < 0.1 ? param.gra / 0.1 : thr2acc;
       }
       debug.hover_percentage = hover_percentage; // debug

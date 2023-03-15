@@ -136,7 +136,7 @@ void real_state_timer_callback(const ros::TimerEvent& event)
         real_traj_marker.points.push_back(pos);
         real_traj_line_vis_pub.publish(real_traj_marker);
         
-        ROS_INFO("publish real pos !");
+        // ROS_INFO("publish real pos !");
     }
     else
     {

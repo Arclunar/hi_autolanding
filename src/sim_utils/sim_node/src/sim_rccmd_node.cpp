@@ -5,7 +5,8 @@
 #include <quadrotor_msgs/TakeoffLand.h> 
 #include <geometry_msgs/PoseStamped.h> 
 #include <mavros_msgs/RCIn.h> 
-#include <sim_node/sim_rccmd.h>
+// #include <sim_node/sim_rccmd.h>
+#include <sim_msgs/sim_rccmd.h>
 
 #define LAND_STAIGHT_DOWNWARD 4
 
@@ -37,11 +38,12 @@ ros::Publisher pub_land_trigger;
 // ros::Subscriber sub_rc;
 ros::Subscriber sub_sim_rc;
 
-void sim_rc_callback(const sim_node::sim_rccmdConstPtr& msg)  // 就少了个引用容易报错
+
+void sim_rc_callback(const sim_msgs::sim_rccmdConstPtr& msg)  // 就少了个引用容易报错
 {
     
 
-    if(msg->sim_rccmd_ch9==sim_node::sim_rccmd::TAKEOFF)
+    if(msg->sim_rccmd_ch9==sim_msgs::sim_rccmd::TAKEOFF)
     {
         ROS_WARN("[RCCMD] takeoff! \r\n");
         quadrotor_msgs::TakeoffLand takeoff_msg;
@@ -49,14 +51,14 @@ void sim_rc_callback(const sim_node::sim_rccmdConstPtr& msg)  // 就少了个引
         takeoff_msg.takeoff_land_cmd = quadrotor_msgs::TakeoffLand::TAKEOFF;
         pub_takeoff.publish(takeoff_msg);
     }
-    else if(msg->sim_rccmd_ch9==sim_node::sim_rccmd::TRACK)
+    else if(msg->sim_rccmd_ch9==sim_msgs::sim_rccmd::TRACK)
     {
         ROS_WARN("[RCCMD] track!\r\n");
         // 给/triger发个消息
         geometry_msgs::PoseStamped track_msg;
         pub_track_trigger.publish(track_msg);
     }
-    else if(msg->sim_rccmd_ch9==sim_node::sim_rccmd::LAND)
+    else if(msg->sim_rccmd_ch9==sim_msgs::sim_rccmd::LAND)
     {
         ROS_WARN("[RCCMD] land on the car!\r\n");
         // 给/land_triger发个消息
@@ -94,7 +96,7 @@ int main(int argc, char **argv)
 
     // 接受遥控器输入
     // 不写<消息类型>也性，或者callback中要加引用
-    sub_sim_rc=n.subscribe<sim_node::sim_rccmd>("/sim_cmd/rc/in", 1, &sim_rc_callback, ros::TransportHints().tcpNoDelay());
+    sub_sim_rc=n.subscribe<sim_msgs::sim_rccmd>("/sim_cmd/rc/in", 1, &sim_rc_callback, ros::TransportHints().tcpNoDelay());
 
     while (ros::ok())
     {

@@ -59,9 +59,9 @@ public:
 	Eigen::Vector3d Kvi;
 	Eigen::Vector3d Kvd;
 	Eigen::Vector3d KAng;
-	Eigen::Vector3d int_e_v;
+	Eigen::Vector3d int_e_v; 
 	Eigen::Vector3d Gravity;
-	std::queue<std::pair<ros::Time, double>> timed_thrust;
+	std::queue<std::pair<ros::Time, double>> timed_thrust; // 推力记录
 	ros::Time last_ctrl_timestamp_{ros::Time(0)};
 	Eigen::Vector3d last_bodyrate_{Eigen::Vector3d(0,0,0)};
 
@@ -127,7 +127,7 @@ public:
 		const Eigen::Vector3d &xd,
 		Eigen::Vector3d &xNor,
 		Eigen::Vector3d &xNord) const;
-
+ 
 	void computeFlatInput(
 		const Eigen::Vector3d &thr_acc,
 		const Eigen::Vector3d &jer,

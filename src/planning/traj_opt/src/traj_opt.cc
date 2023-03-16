@@ -392,6 +392,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
     return false;
   }
   N_ = 2 * cfgHs_.size();
+
   // NOTE wonderful trick
   sum_T_ = tracking_dur_;
 
@@ -490,6 +491,7 @@ void TrajOpt::addTimeIntPenalty(double& cost) {
   }
 }
 
+// 加入约束
 void TrajOpt::addTimeCost(double& cost) {
   const auto& T = jerkOpt_.T1;
   int piece = 0;
@@ -506,7 +508,7 @@ void TrajOpt::addTimeCost(double& cost) {
   Eigen::Matrix<double, 6, 3> gradViolaPc;
 
   for (int i = 0; i < M; ++i) {
-    double rho = exp2(-3.0 * i / M);
+    double rho = exp2(-3.0 * i / M); // 2的n次方
     while (t - t_pre > T(piece)) {
       t_pre += T(piece);
       piece++;
@@ -516,12 +518,12 @@ void TrajOpt::addTimeCost(double& cost) {
     s3 = s2 * s1;
     s4 = s2 * s2;
     s5 = s4 * s1;
-    beta0 << 1.0, s1, s2, s3, s4, s5;
-    beta1 << 0.0, 1.0, 2.0 * s1, 3.0 * s2, 4.0 * s3, 5.0 * s4;
-    const auto& c = jerkOpt_.b.block<6, 3>(piece * 6, 0);
-    pos = c.transpose() * beta0;
-    vel = c.transpose() * beta1;
-    Eigen::Vector3d target_p = tracking_ps_[i];
+    beta0 << 1.0, s1, s2, s3, s4, s5; // 多项式的基
+    beta1 << 0.0, 1.0, 2.0 * s1, 3.0 * s2, 4.0 * s3, 5.0 * s4; // 多项式导数的基
+    const auto& c = jerkOpt_.b.block<6, 3>(piece * 6, 0); //从括号位置开始取尖括号大小的子矩阵
+    pos = c.transpose() * beta0; // 获得位置
+    vel = c.transpose() * beta1; // 获得速度
+    Eigen::Vector3d target_p = tracking_ps_[i]; 
 
     if (landing_) {
       if (grad_cost_p_landing(pos, target_p, grad_tmp, cost_tmp)) {
@@ -532,13 +534,13 @@ void TrajOpt::addTimeCost(double& cost) {
           jerkOpt_.gdT.head(piece).array() += -rho * step * grad_tmp.dot(vel);
         }
       }
-    } else {
+    } else { //跟踪约束
       if (grad_cost_p_tracking(pos, target_p, grad_tmp, cost_tmp)) {
-        gradViolaPc = beta0 * grad_tmp.transpose();
+        gradViolaPc = beta0 * grad_tmp.transpose();  
         cost += rho * step * cost_tmp;
         jerkOpt_.gdC.block<6, 3>(piece * 6, 0) += rho * step * gradViolaPc;
         if (piece > 0) {
-          jerkOpt_.gdT.head(piece).array() += -rho * step * grad_tmp.dot(vel);
+          jerkOpt_.gdT.head(piece).array() += -rho * step * grad_tmp.dot(vel); 
         }
       }
       // TODO occlusion
@@ -598,7 +600,7 @@ bool TrajOpt::grad_cost_p_corridor(const Eigen::Vector3d& p,
 static double penF(const double& x, double& grad) {
   static double eps = 0.05;
   static double eps2 = eps * eps;
-  static double eps3 = eps * eps2;
+  static double eps3 = eps * eps2; //epsilon
   if (x < 2 * eps) {
     double x2 = x * x;
     double x3 = x * x2;
@@ -611,6 +613,7 @@ static double penF(const double& x, double& grad) {
   }
 }
 
+// 三次方惩罚项
 static double penF2(const double& x, double& grad) {
   double x2 = x * x;
   grad = 3 * x2;
@@ -622,43 +625,43 @@ bool TrajOpt::grad_cost_p_tracking(const Eigen::Vector3d& p,
                                    Eigen::Vector3d& gradp,
                                    double& costp) {
   // return false;
-  double upper = tracking_dist_ + tolerance_d_;
-  double lower = tracking_dist_ - tolerance_d_;
+  double upper = tracking_dist_ + tolerance_d_; // 跟踪距离远端平方
+  double lower = tracking_dist_ - tolerance_d_; // 跟踪距离近段平方
   upper = upper * upper;
   lower = lower * lower;
 
   Eigen::Vector3d dp = (p - target_p);
-  double dr2 = dp.head(2).squaredNorm();
-  double dz2 = dp.z() * dp.z();
+  double dr2 = dp.head(2).squaredNorm(); // 横向距离平方
+  double dz2 = dp.z() * dp.z(); // 纵向距离平方
 
   bool ret;
   gradp.setZero();
   costp = 0;
 
-  double pen = dr2 - upper;
-  if (pen > 0) {
+  double pen = dr2 - upper; 
+  if (pen > 0) { // 距离太远了
     double grad;
     costp += penF(pen, grad);
     gradp.head(2) += 2 * grad * dp.head(2);
     ret = true;
   } else {
-    pen = lower - dr2;
+    pen = lower - dr2; // 距离太近了
     if (pen > 0) {
       double pen2 = pen * pen;
-      gradp.head(2) -= 6 * pen2 * dp.head(2);
-      costp += pen2 * pen;
+      gradp.head(2) -= 6 * pen2 * dp.head(2); // 梯队
+      costp += pen2 * pen; // cost是pen的三次方
       ret = true;
     }
   }
-  pen = dz2 - tolerance_d_ * tolerance_d_;
-  if (pen > 0) {
+  pen = dz2 - tolerance_d_ * tolerance_d_; // 纵向距离
+  if (pen > 0) { // 纵向距离过了
     double pen2 = pen * pen;
     gradp.z() += 6 * pen2 * dp.z();
     costp += pen * pen2;
     ret = true;
   }
 
-  gradp *= rhoTracking_;
+  gradp *= rhoTracking_; // 乘上权重
   costp *= rhoTracking_;
 
   return ret;

@@ -22,7 +22,7 @@ class TrajOpt {
   std::vector<Eigen::MatrixXd> cfgHs_;
   // Minimum Jerk Optimizer
   minco::MinJerkOpt jerkOpt_;
-  // weight for each vertex
+  // weight for each vertex 角顶
   Eigen::VectorXd p_;
   // duration of each piece of the trajectory
   Eigen::VectorXd t_;

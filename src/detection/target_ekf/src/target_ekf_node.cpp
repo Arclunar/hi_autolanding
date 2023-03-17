@@ -29,6 +29,12 @@ ros::Publisher target_odom_pub_, yolo_odom_pub_;
 Eigen::Matrix3d cam2body_R_front_, cam2body_R_down_;
 Eigen::Vector3d cam2body_p_front_, cam2body_p_down_;
 
+Eigen::Matrix3d cam2body_R_realsense;
+Eigen::Vector3d cam2body_p_realsense;
+ros::Publisher april_odom_realsense;
+double fx_r,fy_r,cx_r,cy_r;
+
+
 ros::Publisher april_odom_front, april_odom_down;
 
 double fx_, fy_, cx_, cy_;
@@ -138,9 +144,84 @@ void predict_state_callback(const ros::TimerEvent& event) {
 }
 
 
+void update_state_realsense_callback(const target_ekf::AprilTagDetectionArrayConstPtr& april_tag_msg, const nav_msgs::OdometryConstPtr& odom_msg) {
+  // std::cout << "yolo stamp: " << bboxes_msg->header.stamp << std::endl;
+  // std::cout << "odom stamp: " << odom_msg->header.stamp << std::endl;
+
+    if (april_tag_msg->detections.size() != 0) {
+      ROS_INFO("realsense find apriltag!");
+  }
+
+  Eigen::Vector3d odom_p;  // NOTE: (By HJ)这是VIO提供的odom 为机体的位姿
+  Eigen::Quaterniond odom_q;
+  odom_p(0) = odom_msg->pose.pose.position.x;
+  odom_p(1) = odom_msg->pose.pose.position.y;
+  odom_p(2) = odom_msg->pose.pose.position.z;
+  odom_q.w() = odom_msg->pose.pose.orientation.w;
+  odom_q.x() = odom_msg->pose.pose.orientation.x;
+  odom_q.y() = odom_msg->pose.pose.orientation.y;
+  odom_q.z() = odom_msg->pose.pose.orientation.z;
+
+  // 从VIO odom (飞机坐标系)得到camera的位置
+  Eigen::Vector3d cam_p = odom_q.toRotationMatrix() * cam2body_p_realsense + odom_p;
+
+  // 相机在世界系下的姿态
+  Eigen::Quaterniond cam_q = odom_q * Eigen::Quaterniond(cam2body_R_realsense);
+
+  // if there is no detection, return!
+  if (april_tag_msg->detections.size() == 0) {
+    // ROS_ERROR("cannot find apriltag!");
+    // ROS_INFO("cannot find apriltag!");
+    return;
+  }
+
+  // get relative tranlation between camera and tag // 相对位置
+  double x = april_tag_msg->detections[0].pose.pose.pose.position.x;
+  double y = april_tag_msg->detections[0].pose.pose.pose.position.y;
+  double z = april_tag_msg->detections[0].pose.pose.pose.position.z;
+  Eigen::Vector3d p(x, y, z); // 
+  // std::cout << "p cam frame: " << p.transpose() << std::endl;
+
+  // get tag's odom in the world frame 位置
+  p = cam_q * p + cam_p;
+  // 20221021 debug 
+  nav_msgs::Odometry pose_april_f;
+  pose_april_f.header.frame_id="world";
+  pose_april_f.pose.pose.position.x=p(0);
+  pose_april_f.pose.pose.position.y=p(1);
+  pose_april_f.pose.pose.position.z=p(2);
+  april_odom_realsense.publish(pose_april_f);
+
+  q_.w() = april_tag_msg->detections[0].pose.pose.pose.orientation.w;
+  q_.x() = april_tag_msg->detections[0].pose.pose.pose.orientation.x;
+  q_.y() = april_tag_msg->detections[0].pose.pose.pose.orientation.y;
+  q_.z() = april_tag_msg->detections[0].pose.pose.pose.orientation.z;
+
+  // get tag's odom in the world frame 姿态
+  q_ = cam_q * q_;
+
+  // update target odom
+  double update_dt = (ros::Time::now() - last_update_stamp_).toSec();
+  if (update_dt > 3.0) {
+    ekfPtr_->reset(p);
+    ROS_WARN("[realsense] ekf reset!");
+  } else if (ekfPtr_->checkValid(p)) { 
+    ekfPtr_->update(p); // 在这里update
+  } else {
+    ROS_ERROR("update invalid!");
+    return;
+  }
+  last_update_stamp_ = ros::Time::now();
+}
+
+
+
 void update_state_front_callback(const target_ekf::AprilTagDetectionArrayConstPtr& april_tag_msg, const nav_msgs::OdometryConstPtr& odom_msg) {
   // std::cout << "yolo stamp: " << bboxes_msg->header.stamp << std::endl;
   // std::cout << "odom stamp: " << odom_msg->header.stamp << std::endl;
+  if (april_tag_msg->detections.size() != 0) {
+      ROS_INFO("front usb_cam find apriltag!");
+  }
 
   Eigen::Vector3d odom_p;  // NOTE: (By HJ)这是VIO提供的odom 为机体的位姿
   Eigen::Quaterniond odom_q;
@@ -161,9 +242,10 @@ void update_state_front_callback(const target_ekf::AprilTagDetectionArrayConstPt
   // if there is no detection, return!
   if (april_tag_msg->detections.size() == 0) {
     // ROS_ERROR("cannot find apriltag!");
-    ROS_INFO("cannot find apriltag!");
+    // ROS_INFO("front camera cannot find apriltag!");
     return;
   }
+  
 
   // get relative tranlation between camera and tag // 相对位置
   double x = april_tag_msg->detections[0].pose.pose.pose.position.x;
@@ -208,6 +290,9 @@ void update_state_front_callback(const target_ekf::AprilTagDetectionArrayConstPt
 void update_state_down_callback(const target_ekf::AprilTagDetectionArrayConstPtr& april_tag_msg, const nav_msgs::OdometryConstPtr& odom_msg) {
   // std::cout << "yolo stamp: " << bboxes_msg->header.stamp << std::endl;
   // std::cout << "odom stamp: " << odom_msg->header.stamp << std::endl;
+  if (april_tag_msg->detections.size() != 0) {
+      ROS_INFO("down usb_cam find apriltag!");
+  }
 
   Eigen::Vector3d odom_p;  // NOTE: (By HJ)这是VIO提供的odom
   Eigen::Quaterniond odom_q;
@@ -291,20 +376,32 @@ int main(int argc, char** argv) {
     cam2body_p_down_ = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(tmp.data(), 3, 1);
   }
 
+  //realsense 
+  if (nh.param<std::vector<double>>("cam2body_R_realsense", tmp, std::vector<double>())) {
+    cam2body_R_realsense = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(tmp.data(), 3, 3);
+  }
+  if (nh.param<std::vector<double>>("cam2body_p_realsense", tmp, std::vector<double>())) {
+    cam2body_p_realsense = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(tmp.data(), 3, 1);
+  }
+
   // 这几个参数似乎没有用
   nh.getParam("cam_fx", fx_);
   nh.getParam("cam_fy", fy_);
   nh.getParam("cam_cx", cx_);
   nh.getParam("cam_cy", cy_);
   nh.getParam("pitch_thr", pitch_thr_);
+  nh.getParam("realsense_cam_fx", fx_r);
+  nh.getParam("realsense_cam_fy", fy_r);
+  nh.getParam("realsense_cam_cx", cx_r);
+  nh.getParam("realsense_cam_cy", cy_r);
 
   // message_filters::Subscriber<object_detection_msgs::BoundingBoxes> yolo_sub_;
-  message_filters::Subscriber<target_ekf::AprilTagDetectionArray> apriltag_sub_front_, apriltag_sub_down_;
+  message_filters::Subscriber<target_ekf::AprilTagDetectionArray> apriltag_sub_front_, apriltag_sub_down_,apriltag_sub_realsense;
 
   message_filters::Subscriber<nav_msgs::Odometry> odom_sub_;
 
   // std::shared_ptr<YoloOdomSynchronizer> yolo_odom_sync_Ptr_;
-  std::shared_ptr<ApriltagOdomSynchronizer> apriltag_odom_sync_Ptr_front, apriltag_odom_sync_Ptr_down;
+  std::shared_ptr<ApriltagOdomSynchronizer> apriltag_odom_sync_Ptr_front, apriltag_odom_sync_Ptr_down,apriltag_odom_sync_Ptr_realsense;
 
   ros::Timer ekf_predict_timer_;
   // ros::Subscriber single_odom_sub = nh.subscribe("odom", 100, &odom_callback, ros::TransportHints().tcpNoDelay());
@@ -315,6 +412,8 @@ int main(int argc, char** argv) {
   // 发布的监测信息
   april_odom_front = nh.advertise<nav_msgs::Odometry>("april_odom_front", 1); // 发布
   april_odom_down = nh.advertise<nav_msgs::Odometry>("april_odom_down", 1);
+  april_odom_realsense=nh.advertise<nav_msgs::Odometry>("april_odom_realsense",1);
+
   int ekf_rate = 20;
   nh.getParam("ekf_rate", ekf_rate);
   ekfPtr_ = std::make_shared<Ekf>(1.0 / ekf_rate);
@@ -324,6 +423,7 @@ int main(int argc, char** argv) {
   // odom_sub_.subscribe(nh, "/vins_fusion/odometry", 100, ros::TransportHints().tcpNoDelay());
   apriltag_sub_front_.subscribe(nh, "/april_tag_front/tag_detections", 100, ros::TransportHints().tcpNoDelay());
   apriltag_sub_down_.subscribe(nh, "/april_tag_down/tag_detections", 100, ros::TransportHints().tcpNoDelay());
+  apriltag_sub_realsense.subscribe(nh, "/realsense/tag_detections", 100, ros::TransportHints().tcpNoDelay());
 
   // 同步
   apriltag_odom_sync_Ptr_front = std::make_shared<ApriltagOdomSynchronizer>(ApriltagOdomSyncPolicy(200), apriltag_sub_front_, odom_sub_);
@@ -331,6 +431,10 @@ int main(int argc, char** argv) {
 
   apriltag_odom_sync_Ptr_down = std::make_shared<ApriltagOdomSynchronizer>(ApriltagOdomSyncPolicy(200), apriltag_sub_down_, odom_sub_);
   apriltag_odom_sync_Ptr_down->registerCallback(boost::bind(&update_state_down_callback, _1, _2));
+
+  apriltag_odom_sync_Ptr_realsense = std::make_shared<ApriltagOdomSynchronizer>(ApriltagOdomSyncPolicy(200), apriltag_sub_realsense, odom_sub_);
+  apriltag_odom_sync_Ptr_realsense->registerCallback(boost::bind(&update_state_realsense_callback, _1, _2));
+
 
   // ekf
   ekf_predict_timer_ = nh.createTimer(ros::Duration(1.0 / ekf_rate), &predict_state_callback);

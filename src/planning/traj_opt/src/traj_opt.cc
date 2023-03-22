@@ -8,7 +8,9 @@ namespace traj_opt {
 
 static bool landing_ = false;
 
-// SECTION  variables transformation and gradient transmission
+// SECTION  variables transformation and gradient transmission // 梯度传递
+
+// 先当作指数和对数的近似计算
 static double expC2(double t) {
   return t > 0.0 ? ((0.5 * t + 1.0) * t + 1.0)
                  : 1.0 / ((0.5 * t - 1.0) * t + 1.0);
@@ -16,6 +18,8 @@ static double expC2(double t) {
 static double logC2(double T) {
   return T > 1.0 ? (sqrt(2.0 * T - 1.0) - 1.0) : (1.0 - sqrt(2.0 / T - 1.0));
 }
+
+
 static void forwardT(const Eigen::Ref<const Eigen::VectorXd>& t, const double& sT, Eigen::Ref<Eigen::VectorXd> vecT) {
   int M = t.size();
   for (int i = 0; i < M; ++i) {
@@ -164,10 +168,10 @@ static void addLayerPGrad(const Eigen::Ref<const Eigen::VectorXd>& p,
 // !SECTION variables transformation and gradient transmission
 
 // SECTION object function
-static inline double objectiveFunc(void* ptrObj,
-                                   const double* x,
-                                   double* grad,
-                                   const int n) {
+static inline double objectiveFunc(void* ptrObj, // TrajOpt对象 
+                                   const double* x, // 所有变量
+                                   double* grad, //所有梯度
+                                   const int n) { 
   TrajOpt& obj = *(TrajOpt*)ptrObj;
 
   Eigen::Map<const Eigen::VectorXd> t(x, obj.dim_t_);
@@ -179,7 +183,7 @@ static inline double objectiveFunc(void* ptrObj,
   Eigen::VectorXd T(obj.N_);
   Eigen::MatrixXd P(3, obj.N_ - 1);
   // T_sigma = T_s + deltaT^2
-  double sumT = obj.sum_T_ + deltaT * deltaT;
+  double sumT = obj.sum_T_ + deltaT * deltaT; 
   forwardT(t, sumT, T);
   forwardP(p, obj.cfgVs_, P);
 
@@ -189,9 +193,11 @@ static inline double objectiveFunc(void* ptrObj,
   obj.addTimeIntPenalty(cost);
   obj.addTimeCost(cost);
   obj.jerkOpt_.calGrads_PT();
-  grad[obj.dim_t_ + obj.dim_p_] = obj.jerkOpt_.gdT.dot(T) / sumT + obj.rhoT_;
-  cost += obj.rhoT_ * deltaT * deltaT;
+
+  grad[obj.dim_t_ + obj.dim_p_] = obj.jerkOpt_.gdT.dot(T) / sumT + obj.rhoT_; //deltaT的梯度
+  cost += obj.rhoT_ * deltaT * deltaT; // deltaT的cost
   grad[obj.dim_t_ + obj.dim_p_] *= 2 * deltaT;
+
   addLayerTGrad(t, sumT, obj.jerkOpt_.gdT, gradt);
   addLayerPGrad(p, obj.cfgVs_, obj.jerkOpt_.gdP, gradp);
 
@@ -284,9 +290,10 @@ void TrajOpt::setBoundConds(const Eigen::MatrixXd& iniState,
   initS.col(2) *= tempNorm > amax_ ? (amax_ / tempNorm) : 1.0;
   tempNorm = finalS.col(2).norm();
   finalS.col(2) *= tempNorm > amax_ ? (amax_ / tempNorm) : 1.0;
+  // 限制初始速度和加速度
 
   Eigen::VectorXd T(N_);
-  T.setConstant(sum_T_ / N_);
+  T.setConstant(sum_T_ / N_); // sum_T_ 是总时间，均匀时间分配
   backwardT(T, t_);
   Eigen::MatrixXd P(3, N_ - 1);
   for (int i = 0; i < N_ - 1; ++i) {
@@ -393,7 +400,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
   }
   N_ = 2 * cfgHs_.size();
 
-  // NOTE wonderful trick
+  // NOTE wonderful trick ?? how wonderful
   sum_T_ = tracking_dur_;
 
   // NOTE: one corridor two pieces

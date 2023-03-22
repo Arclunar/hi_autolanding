@@ -76,7 +76,8 @@ class Nodelet : public nodelet::Nodelet {
   ros::Subscriber gridmap_sub_, odom_sub_, target_sub_, triger_sub_, land_triger_sub_;
   ros::Subscriber laser_sub_;
   ros::Timer plan_timer_;
-  ros::Timer ctrl_timer; // 控制降落
+  ros::Timer ctrl_timer_; // 控制降落
+  ros::Publisher ctrl_heartbeat_pub_;
 
   ros::Publisher traj_pub_, heartbeat_pub_, replanState_pub_;
   ros::Publisher relay_pub_, motors_pub_;   // relay 继电器
@@ -84,6 +85,7 @@ class Nodelet : public nodelet::Nodelet {
   ros::Publisher task_state_pub_;
   ros::Publisher cali_pos_pub_;
   ros::Subscriber set_task_sub_;
+
 
 
 
@@ -128,6 +130,7 @@ class Nodelet : public nodelet::Nodelet {
   std::atomic_bool triger_received_ = ATOMIC_VAR_INIT(false);
   std::atomic_bool target_received_ = ATOMIC_VAR_INIT(false);
   std::atomic_bool land_triger_received_ = ATOMIC_VAR_INIT(false);
+  std::atomic_bool trigger_cali_ctrl_flag = ATOMIC_VAR_INIT(false);
 
   // 启动继电器
   void turn_on_relay() {
@@ -351,11 +354,124 @@ class Nodelet : public nodelet::Nodelet {
 //                           CALI  ---> LANDED
 
 
+bool landed_flag = false;
+
+void ctrl_timer_callback(const ros::TimerEvent& event)
+{
+    ctrl_heartbeat_pub_.publish(std_msgs::Empty());
+    if(!trigger_cali_ctrl_flag)
+      return ;
+  
+   // 获得目标以及target的odom
+    //! step 1 : obtain state of odom
+    while (odom_lock_.test_and_set()) ;
+    auto odom_msg = odom_msg_; 
+    odom_lock_.clear();
+    Eigen::Vector3d odom_p(odom_msg.pose.pose.position.x,
+                          odom_msg.pose.pose.position.y,
+                          odom_msg.pose.pose.position.z);
+    Eigen::Vector3d odom_v(odom_msg.twist.twist.linear.x,
+                          odom_msg.twist.twist.linear.y,
+                          odom_msg.twist.twist.linear.z);
+    Eigen::Quaterniond odom_q(odom_msg.pose.pose.orientation.w,
+                              odom_msg.pose.pose.orientation.x,
+                              odom_msg.pose.pose.orientation.y,
+                              odom_msg.pose.pose.orientation.z);
+
+    //! step 2 : obtain state of target 
+    while (target_lock_.test_and_set())
+      ;
+    replanStateMsg_.target = target_msg_; 
+    target_lock_.clear();
+
+    Eigen::Vector3d target_p(replanStateMsg_.target.pose.pose.position.x,
+                            replanStateMsg_.target.pose.pose.position.y,
+                            replanStateMsg_.target.pose.pose.position.z);
+    Eigen::Vector3d target_v(replanStateMsg_.target.twist.twist.linear.x,
+                            replanStateMsg_.target.twist.twist.linear.y,
+                            replanStateMsg_.target.twist.twist.linear.z);
+    Eigen::Quaterniond target_q;
+    target_q.w() = replanStateMsg_.target.pose.pose.orientation.w;
+    target_q.x() = replanStateMsg_.target.pose.pose.orientation.x;
+    target_q.y() = replanStateMsg_.target.pose.pose.orientation.y;
+    target_q.z() = replanStateMsg_.target.pose.pose.orientation.z;
+
+    
+    // 设置target位置为匀速直线运动之后的时间 ，加一点点的预测
+    Eigen::Vector3d cali_point = target_p + target_v * 0.01;
+    target_p=cali_point;
+
+    static Eigen::Vector3d cali_p,cali_v;
+
+    static bool first_flag=true,not_stable_over_head_flag=true;
+
+
+
+    Eigen::Vector3d delta_p=odom_p-target_p;
+    Eigen::Vector3d delta_v=odom_v-target_v;
+
+    // judge if landed
+    if(delta_p.norm()<=0.1)
+    {
+      landed_flag=true;
+      ROS_WARN("[ planner ] CALI stage : landed success!!!");
+      stop_motors(); 
+      return ;
+    }
+
+
+    // if 正上方 稳定跟踪
+    delta_p.z()=0;
+    if(delta_p.norm()<=0.3 && delta_v.norm()<=0.1){
+      not_stable_over_head_flag=false;
+    }
+
+    if(!not_stable_over_head_flag)
+        ROS_WARN("[ planner ] CALI stage : STABLE OVER HEAD  !!! ");
+
+    if(first_flag || not_stable_over_head_flag )
+    {
+      cali_p.x()=target_p.x();
+      cali_p.y()=target_p.y();
+      cali_p.z()=odom_p.z();
+      cali_v.x()=target_v.x();
+      cali_v.y()=target_v.y();
+      //TODO yaw 设置为小车的方向
+      cali_v.z()=0;
+      first_flag = false;
+    }
+    else
+    {
+      Eigen::Vector3d down_speed(0,0,-0.005);
+      cali_p.x()=target_p.x();
+      cali_p.y()=target_p.y();
+      // cali_p.z()-=cali_p.z()-0.0005;
+      cali_p=cali_p+down_speed;
+      cali_v.x()=target_v.x();
+      cali_v.y()=target_v.y();
+      int plan_hz = 20;
+      // cali_v.z()=-0.0005 * plan_hz;
+    }
+
+    //! step publish the desired position and velocity
+    quadrotor_msgs::PositionCommand position_cmd_msg;
+    position_cmd_msg.position.x=cali_p.x();
+    position_cmd_msg.position.y=cali_p.y();
+    position_cmd_msg.position.z=cali_p.z();
+    position_cmd_msg.velocity.x=cali_v.x();
+    position_cmd_msg.velocity.y=cali_v.y();
+    position_cmd_msg.velocity.z=cali_v.z();
+
+    ROS_WARN("[ planner ] CALI stage : position_cmd published");
+    cali_pos_pub_.publish(position_cmd_msg);
+}
+
+
 //! 重点，由规划定时器触发的回调函数
   // NOTE main callback
 void plan_timer_callback(const ros::TimerEvent& event) {
     heartbeat_pub_.publish(std_msgs::Empty()); // planner heartbeat
-    // ROS_WARN("[ planner ] waken up");
+    ROS_WARN_ONCE("[ planner ] waken up");
     if (!odom_received_ || !map_received_) { // no odom or no map planner not work
       ROS_INFO("[ planner ] no odom or no map received");
       return;
@@ -397,17 +513,11 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     //   return;
     // }
 
-    if (task_state == NOT_READY) { // no track trigger
-      ROS_INFO("[ planner ] watting for trigger for uav, task state not ready");
-      // task_state = NOT_READY;
-      return;
-    }
-
-
     if (!target_received_) { // no target in view
-      ROS_INFO("[ planner ] watting for landing target");
+      ROS_INFO_ONCE("[ planner ] watting for landing target");
       return;
     }
+      ROS_INFO_ONCE("[ planner ] target in view");
 
 
     // 判断状态
@@ -416,7 +526,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       case NOT_READY:
       {
         task_state_msg.state="NOT_READY";
-        ROS_INFO("[planner] not ready");
+        ROS_INFO_ONCE("[planner] watting for trigger for uav, task state not ready");
         return ;
         break;
       }
@@ -424,7 +534,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       case READY:
       {
         task_state_msg.state="REDAY";
-        ROS_INFO("[[planner] planner is ready]");
+        ROS_INFO_ONCE("[[planner] planner is ready]");
         break;
       }
 
@@ -738,7 +848,8 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       Eigen::Vector3d landing_dv=target_v-odom_v;
       landing_dp.z()=0;
       landing_dv.z()=0;
-      if(landing_dp.norm()<0.1 && landing_dv.norm()<target_v.norm()*0.3) // 相对速度小于车的速度乘上比例项
+      // if(landing_dp.norm()<0.1 && landing_dv.norm()<target_v.norm()*0.3) // 相对速度小于车的速度乘上比例项
+      if(landing_dp.norm()<0.2)
       {
           task_state=CALI;
           ROS_WARN("[ planner ] LANDING stage : switch to CALI !!!");
@@ -818,8 +929,9 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         Eigen::Vector3d p_start = iniState.col(0); // 开始位置
         std::vector<Eigen::Vector3d> path, way_pts; // 路径和waypoint
         
-        if (generate_new_traj_success)  // prediction for car
+        if (generate_new_traj_success) { // prediction for car
           generate_new_traj_success = envPtr_->short_astar(p_start, target_predcit.back(), path); // 从当前位置到预测的终点直接搜出一条Astar
+        ROS_WARN_STREAM("[ planner ] landing stage : path.size() = " << path.size());
 
         Trajectory traj;
         
@@ -891,121 +1003,20 @@ void plan_timer_callback(const ros::TimerEvent& event) {
           break;  // current generated traj invalid but last is valid
         }
         visPtr_->visualize_traj(traj, "traj"); // 可视化轨迹，发布的话题名称为traj，对应航点为traj_wpts
+        }
         break;
       }
       case CALI:
       {
-        task_state_msg.state="CALIBRATION";
-          ROS_INFO("[planner] in calibration process");
+        ROS_INFO_ONCE("[ planner ] in calibration process");
+        if(!landed_flag)
+          trigger_cali_ctrl_flag = true;
 
-        // 获得目标以及target的odom
-        //! step 1 : obtain state of odom
-        while (odom_lock_.test_and_set()) ;
-        auto odom_msg = odom_msg_; 
-        odom_lock_.clear();
-        Eigen::Vector3d odom_p(odom_msg.pose.pose.position.x,
-                              odom_msg.pose.pose.position.y,
-                              odom_msg.pose.pose.position.z);
-        Eigen::Vector3d odom_v(odom_msg.twist.twist.linear.x,
-                              odom_msg.twist.twist.linear.y,
-                              odom_msg.twist.twist.linear.z);
-        Eigen::Quaterniond odom_q(odom_msg.pose.pose.orientation.w,
-                                  odom_msg.pose.pose.orientation.x,
-                                  odom_msg.pose.pose.orientation.y,
-                                  odom_msg.pose.pose.orientation.z);
-
-
-
-
-         //! step 2 : obtain state of target 
-        while (target_lock_.test_and_set())
-          ;
-        replanStateMsg_.target = target_msg_; 
-        target_lock_.clear();
-
-        Eigen::Vector3d target_p(replanStateMsg_.target.pose.pose.position.x,
-                                replanStateMsg_.target.pose.pose.position.y,
-                                replanStateMsg_.target.pose.pose.position.z);
-        Eigen::Vector3d target_v(replanStateMsg_.target.twist.twist.linear.x,
-                                replanStateMsg_.target.twist.twist.linear.y,
-                                replanStateMsg_.target.twist.twist.linear.z);
-        Eigen::Quaterniond target_q;
-        target_q.w() = replanStateMsg_.target.pose.pose.orientation.w;
-        target_q.x() = replanStateMsg_.target.pose.pose.orientation.x;
-        target_q.y() = replanStateMsg_.target.pose.pose.orientation.y;
-        target_q.z() = replanStateMsg_.target.pose.pose.orientation.z;
-
-        
-        // 设置target位置为匀速直线运动之后的时间 ，加一点点的预测
-        Eigen::Vector3d cali_point = target_p + target_v * 0.01;
-        target_p=cali_point;
-
-        static Eigen::Vector3d cali_p,cali_v;
-
-        static bool first_flag=true,not_stable_over_head_flag=true;
-
-        static bool landed_flag =false;
-
-
-        Eigen::Vector3d delta_p=odom_p-target_p;
-        Eigen::Vector3d delta_v=odom_v-target_v;
-
-        // judge if landed
-        if(delta_p.norm()<=0.1)
-        {
-          landed_flag=true;
-          ROS_WARN("[ planner ] CALI stage : landed success!!!");
-          stop_motors(); 
-          return ;
+        else{
+          trigger_cali_ctrl_flag = false; // 关闭ctrl_callback
+          ROS_WARN_ONCE("[ planner ] CALI stage : land success "); 
+          task_state = READY;
         }
-
-
-        // if 正上方 稳定跟踪
-        delta_p.z()=0;
-        if(delta_p.norm()<=0.3 && delta_v.norm()<=0.1){
-          not_stable_over_head_flag=false;
-        }
-
-        if(!not_stable_over_head_flag)
-           ROS_WARN("[ planner ] CALI stage : STABLE OVER HEAD  !!! ");
-
-        if(first_flag || not_stable_over_head_flag )
-        {
-          cali_p.x()=target_p.x();
-          cali_p.y()=target_p.y();
-          cali_p.z()=odom_p.z();
-          cali_v.x()=target_v.x();
-          cali_v.y()=target_v.y();
-          //TODO yaw 设置为小车的方向
-          cali_v.z()=0;
-          first_flag = false;
-        }
-        else
-        {
-          Eigen::Vector3d down_speed(0,0,-0.005);
-          cali_p.x()=target_p.x();
-          cali_p.y()=target_p.y();
-          // cali_p.z()-=cali_p.z()-0.0005;
-          cali_p=cali_p+down_speed;
-          cali_v.x()=target_v.x();
-          cali_v.y()=target_v.y();
-          int plan_hz = 20;
-          // cali_v.z()=-0.0005 * plan_hz;
-        }
-
-
-        //! step publish the desired position and velocity
-        quadrotor_msgs::PositionCommand position_cmd_msg;
-        position_cmd_msg.position.x=cali_p.x();
-        position_cmd_msg.position.y=cali_p.y();
-        position_cmd_msg.position.z=cali_p.z();
-        position_cmd_msg.velocity.x=cali_v.x();
-        position_cmd_msg.velocity.y=cali_v.y();
-        position_cmd_msg.velocity.z=cali_v.z();
-
-        ROS_WARN("[ planner ] CALI stage : position_cmd published");
-        cali_pos_pub_.publish(position_cmd_msg);
-
 
         break;
       }
@@ -1019,14 +1030,68 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       case DEBUG:
       {
         task_state_msg.state="DEBUG";
+
+
+        // 调节pid
+
+        // step 1 : 飞机目前的状态
+        while (odom_lock_.test_and_set()) ;
+        auto odom_msg = odom_msg_; 
+        odom_lock_.clear(); 
+
+        Eigen::Vector3d odom_p(odom_msg.pose.pose.position.x,
+                              odom_msg.pose.pose.position.y,
+                              odom_msg.pose.pose.position.z);
+        Eigen::Vector3d odom_v(odom_msg.twist.twist.linear.x,
+                              odom_msg.twist.twist.linear.y,
+                              odom_msg.twist.twist.linear.z);
+        Eigen::Quaterniond odom_q(odom_msg.pose.pose.orientation.w,
+                                  odom_msg.pose.pose.orientation.x,
+                                  odom_msg.pose.pose.orientation.y,
+                                  odom_msg.pose.pose.orientation.z);
+        // step 2 : 山歌地图
+        while (gridmap_lock_.test_and_set()) 
+          ;
+        gridmapPtr_->from_msg(map_msg_);
+        replanStateMsg_.occmap = map_msg_; 
+        gridmap_lock_.clear(); 
+
+        Eigen::MatrixXd iniState,finState;
+        iniState.setZero(3,3);
+        finState.setZero(3,3);
+
+        Eigen::Vector3d p_start = iniState.col(0);
+        Eigen::Vector3d p_end = finState.col(0);
+        std::vector<Eigen::Vector3d> path;
+        
+        bool generate_traj_success = envPtr_->short_astar(p_start,p_end,path);
+
+        Trajectory traj;
+
+        std::vector<Eigen::MatrixXd> hPolys;
+        std::vector<std::pair<Eigen::Vector3d,Eigen::Vector3d>> keyPts;
+
+        envPtr_->generateSFC(path,2.0,hPolys,keyPts);
+
+        std::vector<Eigen::Vector3d> target_predict;
+        generate_traj_success = trajOptPtr_->generate_traj(iniState,finState,target_predict,hPolys,traj);
+        
+        ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.03); // 预测终点的时间戳
+
+        double yaw=0;
+        pub_traj(traj, yaw, replan_stamp); //发布轨迹，在这里发布轨迹
+
+
+
+
+
+
         break;
       }
       default:
         break;
     }
     
-
-
     return ;
 }
 
@@ -1062,6 +1127,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
   void init(ros::NodeHandle& nh) {
     // set parameters of planning
     int plan_hz = 10;
+    
     nh.getParam("plan_hz", plan_hz);
     nh.getParam("tracking_dur", tracking_dur_); 
     nh.getParam("tracking_dist", tracking_dist_); 
@@ -1069,6 +1135,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     nh.getParam("tracking_z", tracking_z_); // 跟踪的高度
     nh.getParam("debug", debug_); // 是否debug模式
     nh.getParam("fake", fake_);  // 是否跟踪
+    int ctrl_hz = nh.param("ctrl_hz",50); // 校正模式的跟踪频率
 
     gridmapPtr_ = std::make_shared<mapping::OccGridMap>();
     envPtr_ = std::make_shared<env::Env>(nh, gridmapPtr_);
@@ -1077,6 +1144,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     prePtr_ = std::make_shared<prediction::Predict>(nh);
 
     heartbeat_pub_ = nh.advertise<std_msgs::Empty>("heartbeat", 10); // 发布心跳，表示planner还活着
+    ctrl_heartbeat_pub_=nh.advertise<std_msgs::Empty>("heartbeat_ctrl",10);
     traj_pub_ = nh.advertise<quadrotor_msgs::PolyTraj>("trajectory", 1); // 发布轨迹消息给traj server，traj_pub_
     replanState_pub_ = nh.advertise<quadrotor_msgs::ReplanState>("replanState", 1); // 发布replanState
 
@@ -1091,27 +1159,13 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     cali_pos_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd",1);
 
 
-    if (debug_) {
-      plan_timer_ = nh.createTimer(ros::Duration(1.0 / plan_hz), &Nodelet::debug_timer_callback, this);
-      
-      // TODO read debug data from files
-      wr_msg::readMsg(replanStateMsg_, ros::package::getPath("planning") + "/../../../debug/replan_state.bin");
-      inflate_gridmap_pub_ = nh.advertise<quadrotor_msgs::OccMap3d>("gridmap_inflate", 10);
-      gridmapPtr_->from_msg(replanStateMsg_.occmap);
-      prePtr_->setMap(*gridmapPtr_);
-      std::cout << "plan state: " << replanStateMsg_.state << std::endl;
-    } 
-    
-    // 追踪fake目标，测试先用这个吧
-    else if (fake_) {
-      // plan定时器
-      plan_timer_ = nh.createTimer(ros::Duration(1.0 / plan_hz), &Nodelet::fake_timer_callback, this);
-    } 
-    
-    else {
+  
+
       // 一般模式
-      plan_timer_ = nh.createTimer(ros::Duration(1.0 / plan_hz), &Nodelet::plan_timer_callback, this); // plan_hz的频率执行callback
-    }
+    ctrl_timer_ = nh.createTimer(ros::Duration(1.0/ ctrl_hz),&Nodelet::ctrl_timer_callback,this);
+
+    plan_timer_ = nh.createTimer(ros::Duration(1.0 / plan_hz), &Nodelet::plan_timer_callback, this); // plan_hz的频率执行callback
+    
     gridmap_sub_ = nh.subscribe<quadrotor_msgs::OccMap3d>("gridmap_inflate", 1, &Nodelet::gridmap_callback, this, ros::TransportHints().tcpNoDelay()); // 膨胀之后的gripmap
     
     // 订阅的里程计信息 /vins/imu_propogate

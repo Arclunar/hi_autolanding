@@ -352,9 +352,9 @@ class MinJerkOpt {
 
   inline Trajectory getTraj(void) const {
     Trajectory traj;
-    traj.reserve(N);
+    traj.reserve(N); // 更改容量 N段
     for (int i = 0; i < N; i++) {
-      traj.emplace_back(T1(i), b.block<6, 3>(6 * i, 0).transpose().rowwise().reverse());
+      traj.emplace_back(T1(i), b.block<6, 3>(6 * i, 0).transpose().rowwise().reverse()); // 时间分配，系数矩阵6x3，系数是竖着排列的，转置，对每行取个倒置
     }
     return traj;
   }

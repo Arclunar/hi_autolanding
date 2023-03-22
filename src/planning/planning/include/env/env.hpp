@@ -715,18 +715,25 @@ class Env {
   inline bool short_astar(const Eigen::Vector3d& start_p,
                           const Eigen::Vector3d& end_p,
                           std::vector<Eigen::Vector3d>& path) {
+    ROS_WARN("in short astar!");
     Eigen::Vector3i start_idx = mapPtr_->pos2idx(start_p);
     Eigen::Vector3i end_idx = mapPtr_->pos2idx(end_p);
+
+    ROS_WARN("start_idx : %d %d %d ",start_idx.x(),start_idx.y(),start_idx.z());
+    ROS_WARN("end_idx : %d %d %d ",end_idx.x(),end_idx.y(),end_idx.z());
+
+
     if (start_idx == end_idx) {
+      ROS_WARN("[ env ] start point and end point in the same grid ");
       path.clear();
       path.push_back(start_p);
       path.push_back(end_p);
       return true;
     }
-    auto stopCondition = [&](const NodePtr& ptr) -> bool {
+    auto stopCondition = [&](const NodePtr& ptr) -> bool { // 停止条件
       return ptr->idx == end_idx;
     };
-    auto calulateHeuristic = [&](const NodePtr& ptr) {
+    auto calulateHeuristic = [&](const NodePtr& ptr) { // 计算H
       Eigen::Vector3i dp = end_idx - ptr->idx;
       ptr->h = std::sqrt(1.0 * dp.squaredNorm());
     };
@@ -734,7 +741,7 @@ class Env {
     std::priority_queue<NodePtr, std::vector<NodePtr>, NodeComparator> open_set;
     std::vector<std::pair<Eigen::Vector3i, double>> neighbors;
     // NOTE 6-connected graph
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i) { // 上下左右前后
       Eigen::Vector3i neighbor(0, 0, 0);
       neighbor[i] = 1;
       neighbors.emplace_back(neighbor, 1);
@@ -746,7 +753,7 @@ class Env {
     // NOTE we should permit the start pos invalid! (for corridor generation)
     if (!curPtr->valid) {
       visited_nodes_.clear();
-      std::cout << "[short astar]start postition invalid!" << std::endl;
+      ROS_WARN("[short astar]start postition invalid!");
       return false;
     }
     curPtr->parent = nullptr;
@@ -797,9 +804,13 @@ class Env {
         std::cout << "[short astar] out of memory!" << std::endl;
       }
     }
+    int count=0;
     if (ret) {
-      for (NodePtr ptr = curPtr->parent; ptr->parent != nullptr; ptr = ptr->parent) {
+      // 修改，把ptr=curPtr->parent 改成  ptr=curPtr，ptr->parent != nullptr改成 ptr!=nullptr包含上终止点和开始点
+      for (NodePtr ptr = curPtr; ptr!= nullptr; ptr = ptr->parent) {
         path.push_back(mapPtr_->idx2pos(ptr->idx));
+        ROS_WARN(" PATH length : %d",++count);
+        ROS_WARN("PATH added %d %d %d",ptr->idx.x(),ptr->idx.y(),ptr->idx.z());
       }
       std::reverse(path.begin(), path.end());
     }

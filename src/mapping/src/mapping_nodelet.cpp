@@ -205,7 +205,7 @@ class Nodelet : public nodelet::Nodelet {
       ru.y() += 0.3;
       ru.z() -= 0.05 ; // 提高0.2
       // gridmap_.setFree(ld, ru);
-      gridmap_.setOccupied(ld, ru);
+      // gridmap_.setOccupied(ld, ru); // 取消占据
       // ROS_WARN("SET OPPCUPIED !!! ");
 
       last_target_odom_ = target_odom_;

@@ -9,7 +9,7 @@
     <!-- 飞机位姿 -->
     <arg name="x" default="0"/>
     <arg name="y" default="0"/>
-    <arg name="z" default="0"/>
+    <arg name="z" default="3"/>
     <arg name="R" default="0"/>
     <arg name="P" default="0"/>
     <arg name="Y" default="0"/>
@@ -17,7 +17,7 @@
         <!-- 车的位姿 -->
     <arg name="car_x" default="1.0"/>
     <arg name="car_y" default="0.0"/>
-    <arg name="car_z" default="0.0"/>
+    <arg name="car_z" default="3.0"/>
     <arg name="car_yaw" default="0.0"/>
 
     <!-- vehicle model and world -->

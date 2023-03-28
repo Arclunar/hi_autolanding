@@ -713,7 +713,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         finState.setZero(3, 3);
         finState.col(0) = path.back(); // 轨迹的终点
         finState.col(1) = target_v; // 和目标一样的速度
-        finState.col(1).z()+=-0.2; // 末端添加一个向下的速度
+        // finState.col(1).z()+=-0.2; // 末端添加一个向下的速度
         generate_new_traj_success = trajOptPtr_->generate_traj(iniState, finState,
                                                                target_predcit, visible_ps, thetas,
                                                                hPolys, traj);

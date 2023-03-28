@@ -12,6 +12,7 @@ void OccGridMap::updateMap(const Eigen::Vector3d& sensor_p,
   // 传感器在有正负的坐标系中
   Eigen::Vector3i offset = sensor_idx - Eigen::Vector3i(size_x / 2, size_y / 2, size_z / 2); 
   // TODO clear the updated part
+  //
   if (init_finished) {
     Eigen::Vector3i move = offset - Eigen::Vector3i(offset_x, offset_y, offset_z);
     Eigen::Vector3i from, to;

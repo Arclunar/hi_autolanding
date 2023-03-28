@@ -24,6 +24,11 @@
       <uri>model://ground_plane</uri>
     </include>
 
+    <include>
+      <name>valley</name>
+      <uri>model://winding_valley_heightmap</uri>
+    </include>
+
     <physics name='default_physics' default='0' type='ode'>
       <ode>
         <solver>
@@ -60,6 +65,27 @@
       <elevation>0</elevation>
       <heading_deg>0</heading_deg>
     </spherical_coordinates>
+
+  <!-- 加入风速插件 -->
+    <plugin name='wind_plugin' filename='libgazebo_wind_plugin.so'>
+      <frameId>base_link</frameId>
+      <robotNamespace/>
+        <windVelocityMean>500.0</windVelocityMean>
+        <windVelocityMax>20.0</windVelocityMax>
+        <windVelocityVariance>0</windVelocityVariance>
+        <windDirectionMean>0 1 0</windDirectionMean>
+        <windDirectionVariance>0</windDirectionVariance>
+        <windGustStart>0</windGustStart>
+        <windGustDuration>0</windGustDuration>
+        <windGustVelocityMean>0</windGustVelocityMean>
+        <windGustVelocityMax>20.0</windGustVelocityMax>
+        <windGustVelocityVariance>0</windGustVelocityVariance>
+        <windGustDirectionMean>1 0 0</windGustDirectionMean>
+        <windGustDirectionVariance>0</windGustDirectionVariance>
+        <windPubTopic>world_wind</windPubTopic>
+    </plugin>
+
+
     <model name='unit_box'>
       <pose>3.52263 -2.39947 0.5 0 -0 0</pose>
       <link name='link'>

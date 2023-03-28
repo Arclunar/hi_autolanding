@@ -54,6 +54,8 @@ struct Predict {
     // map.inflate_last();
   }
 
+
+  // 简单暴力的motion primitives
   inline bool predict(const Eigen::Vector3d& target_p,
                       const Eigen::Vector3d& target_v,
                       std::vector<Eigen::Vector3d>& target_predcit,
@@ -61,7 +63,7 @@ struct Predict {
     auto score = [&](const NodePtr& ptr) -> double {
       return rho_a * ptr->a.norm();
     };
-    Eigen::Vector3d end_p = target_p + target_v * pre_dur;
+    Eigen::Vector3d end_p = target_p + target_v * pre_dur; // 匀速直线运动
     auto calH = [&](const NodePtr& ptr) -> double {
       return 0.001 * (ptr->p - end_p).norm();
     };
@@ -80,12 +82,12 @@ struct Predict {
     curPtr->h = 0;
     curPtr->t = 0;
     double dt2_2 = dt * dt / 2;
-    while (curPtr->t < pre_dur) {
+    while (curPtr->t < pre_dur) {  // 积分
       for (input.x() = -3; input.x() <= 3; input.x() += 3)
         for (input.y() = -3; input.y() <= 3; input.y() += 3) {
           Eigen::Vector3d p = curPtr->p + curPtr->v * dt + input * dt2_2;
           Eigen::Vector3d v = curPtr->v + input * dt;
-          if (!isValid(p, v)) {
+          if (!isValid(p, v)) { // 撞道障碍物
             continue;
           }
           if (stack_top == MAX_MEMORY) {
@@ -104,7 +106,7 @@ struct Predict {
           ptr->parent = curPtr;
           ptr->t = curPtr->t + dt;
           ptr->score = curPtr->score + score(ptr);
-          ptr->h = calH(ptr);
+          ptr->h = calH(ptr); //启发式函数
           open_set.push(ptr);
           // std::cout << "open set push: " << state.transpose() << std::endl;
         }

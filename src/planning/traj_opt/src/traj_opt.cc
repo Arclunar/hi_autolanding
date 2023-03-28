@@ -350,6 +350,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
   sum_T_ = tracking_dur_;
 
   // NOTE: one corridor two pieces
+  //
   dim_t_ = N_ - 1;
   dim_p_ = 0;
   for (const auto& cfgV : cfgVs_) {

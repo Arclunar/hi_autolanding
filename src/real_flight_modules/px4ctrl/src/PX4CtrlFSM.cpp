@@ -45,7 +45,7 @@ void PX4CtrlFSM::process()
 	Controller_Output_t u;
 	Desired_State_t des(odom_data); // 期望状态为目前状态
 	bool rotor_low_speed_during_land = false;
-
+	
 	// STEP1: state machine runs
 	switch (state)
 	{
@@ -76,6 +76,7 @@ void PX4CtrlFSM::process()
 
 			ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_HOVER(L2)\033[32m");
 		}
+		// manual -> takeoff
 		else if (param.takeoff_land.enable && takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::TAKEOFF) // Try to jump to AUTO_TAKEOFF
 		{
 			if (!odom_is_received(now_time))
@@ -150,28 +151,28 @@ void PX4CtrlFSM::process()
 
 	case AUTO_HOVER:
 	{
-		if (!rc_data.is_hover_mode || !odom_is_received(now_time))
+
+		if (!rc_data.is_hover_mode || !odom_is_received(now_time)) // auto_hover -> manual_ctrl 遥控器切手动
 		{
 			state = MANUAL_CTRL;
 			toggle_offboard_mode(false);
 
 			ROS_WARN("[px4ctrl] AUTO_HOVER(L2) --> MANUAL_CTRL(L1)");
 		}
-		else if (rc_data.is_command_mode && cmd_is_received(now_time))
+		else if (rc_data.is_command_mode && cmd_is_received(now_time)) // 遥控器在command且收到指令，切到代码控制
 		{
 			if (state_data.current_state.mode == "OFFBOARD")
 			{
 				state = CMD_CTRL;
-				des = get_cmd_des();
+				des = get_cmd_des(); // 准备送给控制器结算指令
 				ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
 			}
 		}
-		else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
+		else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND) // 切降落
 		{
 
 			state = AUTO_LAND;
 			set_start_pose_for_takeoff_land(odom_data);
-
 			ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND\033[32m");
 		}
 		else
@@ -179,10 +180,10 @@ void PX4CtrlFSM::process()
 			set_hov_with_rc();
 			des = get_hover_des();
 			if ((rc_data.enter_command_mode) ||
-				(takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second))
+				(takeoff_land.delay_trigger.first && now_time > takeoff_land.delay_trigger.second)) // 刚切到enter或者刚从起飞切过来
 			{
 				takeoff_land.delay_trigger.first = false;
-				publish_trigger(odom_data.msg);
+				publish_trigger(odom_data.msg); //      fsm.traj_start_trigger_pub = nh.advertise<geometry_msgs::PoseStamped>("/traj_start_trigger", 10);
 				ROS_INFO("\033[32m[px4ctrl] TRIGGER sent, allow user command.\033[32m");
 			}
 
@@ -194,7 +195,7 @@ void PX4CtrlFSM::process()
 
 	case CMD_CTRL:
 	{
-		// 
+
 		if (!rc_data.is_hover_mode || !odom_is_received(now_time)) // 必须同时true才过
 		{
 			state = MANUAL_CTRL;
@@ -202,7 +203,15 @@ void PX4CtrlFSM::process()
 
 			ROS_WARN("[px4ctrl] From CMD_CTRL(L3) to MANUAL_CTRL(L1)!");
 		}
-		else if (!rc_data.is_command_mode || !cmd_is_received(now_time)) // 如果不是同时true
+		// else if (!rc_data.is_command_mode || !cmd_is_received(now_time)) // 如果不是同时true，
+		// {
+		// 	state = AUTO_HOVER;
+		// 	set_hov_with_odom();
+		// 	des = get_hover_des();
+		// 	ROS_INFO("[px4ctrl] From CMD_CTRL(L3) to AUTO_HOVER(L2)!");
+		// }
+		// 修改log，没收到命令时不切换成auto_hover
+		else if (!rc_data.is_command_mode || false) // 如果不是同时true，
 		{
 			state = AUTO_HOVER;
 			set_hov_with_odom();
@@ -227,7 +236,8 @@ void PX4CtrlFSM::process()
 
 	case AUTO_TAKEOFF:
 	{
-		if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
+
+		if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn people.
 		{
 			des = get_rotor_speed_up_des(now_time);
 		}
@@ -242,7 +252,7 @@ void PX4CtrlFSM::process()
 		}
 		else
 		{
-			des = get_takeoff_land_des(param.takeoff_land.speed);
+			des = get_takeoff_land_des(param.takeoff_land.speed); // 起飞时的目标状态
 		}
 
 		break;
@@ -250,6 +260,7 @@ void PX4CtrlFSM::process()
 
 	case AUTO_LAND:
 	{
+
 		if (!rc_data.is_hover_mode || !odom_is_received(now_time))
 		{
 			state = MANUAL_CTRL;
@@ -264,23 +275,23 @@ void PX4CtrlFSM::process()
 			des = get_hover_des();
 			ROS_INFO("[px4ctrl] From AUTO_LAND to AUTO_HOVER(L2)!");
 		}
-		else if (!get_landed())
+		else if (!get_landed()) // 还在降落状态
 		{
 			des = get_takeoff_land_des(-param.takeoff_land.speed);
 		}
-		else
+		else // 降落完毕
 		{
 			rotor_low_speed_during_land = true;
 
 			static bool print_once_flag = true;
 			if (print_once_flag)
 			{
-				ROS_INFO("\033[32m[px4ctrl] Wait for abount 10s to let the drone arm.\033[32m");
+				ROS_INFO("\033[32m[px4ctrl] Wait for abount 10s to let the drone disarm.\033[32m");
 				print_once_flag = false;
 			}
 
 			if (extended_state_data.current_extended_state.landed_state == mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND) // PX4 allows disarm after this
-			{
+			{ // 起飞之后就不是1，是2了
 				static double last_trial_time = 0; // Avoid too frequent calls
 				if (now_time.toSec() - last_trial_time > 1.0)
 				{
@@ -309,13 +320,15 @@ void PX4CtrlFSM::process()
 
 	// STEP2: estimate thrust model
 	// 估计推力模型， 或许可以注释掉
-	if (state == AUTO_HOVER || state == CMD_CTRL)
+	// 
+	// if (state == AUTO_HOVER || state == CMD_CTRL) // 在cmd模式中进行估计推力，一旦碰到东西就不准了
+	if (state == AUTO_HOVER)
 	{
 		controller.estimateThrustModel(imu_data.a, bat_data.volt, param);
 	}
 
 	// STEP3: solve and update new control commands
-	if (rotor_low_speed_during_land) // used at the start of auto takeoff
+	if (rotor_low_speed_during_land) // used at the start of auto takeoff ，其实只在land上面用到而已
 	{
 		motors_idling(imu_data, u);
 	}
@@ -346,36 +359,36 @@ void PX4CtrlFSM::process()
 
 	// STEP4: publish control commands to mavros
 	if
-	(	// 起飞降落信号
+	(	// 刚收到killmotor信号
 		takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::KILLMOTOR
 		&& takeoff_land_is_received(now_time)
 	)
 	{
-		// printf("kill!!!!!!!!!!!!\r\n");
+		// ROS_INFO("[ px4ctrl ] kill!!!!");
 		publish_killmotor_ctrl(now_time);
 	}
 	else
 	{
 		if
-		(	// 
+		(	// 降落信号
 			takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::TRUST_ADJUST_BY_LASER
 			&& takeoff_land_is_received(now_time)
 			&& laser_is_received(now_time)
 		)
 		{
 			float thrust_k = 1.0;
-			if(laser_data.laser_ground_mm <= 100)
+			if(laser_data.laser_ground_mm <= 80)
 			{
-				thrust_k = 0.6;
+				thrust_k = 0.4;
 			}
-			else if(laser_data.laser_ground_mm > 100 && laser_data.laser_ground_mm < 400)
+			else if(laser_data.laser_ground_mm > 70 && laser_data.laser_ground_mm < 80) // 太高就降了
 			{
-				thrust_k = (laser_data.laser_ground_mm - 100.0) / 300.0 * 0.4 + 0.6;
+				thrust_k = (laser_data.laser_ground_mm - 70.0) / 10.0 * 0.6 + 0.4; // 根据距离控制推力比例系数,调的更抖一些
 			}
 
 			ROS_ERROR("laser = %d mm,  thrust_k = %f\r\n", laser_data.laser_ground_mm, thrust_k);
 			u.thrust = u.thrust * thrust_k;
-		} // 根据距离调整推力，稳定建降落
+		} // 根据距离调整推力，稳定降落
 		
 		if (param.use_bodyrate_ctrl)
 		{
@@ -409,20 +422,20 @@ void PX4CtrlFSM::motors_idling(const Imu_Data_t &imu, Controller_Output_t &u)
 void PX4CtrlFSM::land_detector(const State_t state, const Desired_State_t &des, const Odom_Data_t &odom)
 {
 	static State_t last_state = State_t::MANUAL_CTRL;
-	if (last_state == State_t::MANUAL_CTRL && (state == State_t::AUTO_HOVER || state == State_t::AUTO_TAKEOFF))
+	if (last_state == State_t::MANUAL_CTRL && (state == State_t::AUTO_HOVER || state == State_t::AUTO_TAKEOFF)) // 在悬停模式或者自动起飞模式，肯定不landed
 	{
 		takeoff_land.landed = false; // Always holds
 	}
 	last_state = state;
 
-	if (state == State_t::MANUAL_CTRL && !state_data.current_state.armed)
+	if (state == State_t::MANUAL_CTRL && !state_data.current_state.armed) // 手动模式，且没有arm，肯定在地下
 	{
 		takeoff_land.landed = true;
 		return; // No need of other decisions
 	}
 
 	// land_detector parameters
-	constexpr double POSITION_DEVIATION_C = -0.5; // Constraint 1: target position below real position for POSITION_DEVIATION_C meters.
+	constexpr double POSITION_DEVIATION_C = -0.5; // Constraint 1: target position below real position for POSITION_DEVIATION_C meters. 保持一段时间，des的位置肯定跑到下面去了
 	constexpr double VELOCITY_THR_C = 0.1;		  // Constraint 2: velocity below VELOCITY_MIN_C m/s.
 	constexpr double TIME_KEEP_C = 3.0;			  // Constraint 3: Time(s) the Constraint 1&2 need to keep.
 
@@ -534,10 +547,10 @@ void PX4CtrlFSM::set_hov_with_rc()
 
 	hover_pose(0) += rc_data.ch[1] * param.max_manual_vel * delta_t * (param.rc_reverse.pitch ? 1 : -1);
 	hover_pose(1) += rc_data.ch[0] * param.max_manual_vel * delta_t * (param.rc_reverse.roll ? 1 : -1);
-	hover_pose(2) += rc_data.ch[2] * param.max_manual_vel * delta_t * (param.rc_reverse.throttle ? 1 : -1);
+	hover_pose(2) += rc_data.ch[2] * param.max_manual_vel * delta_t * (param.rc_reverse.throttle ? 1 : -1); // 推力项
 	hover_pose(3) += rc_data.ch[3] * param.max_manual_vel * delta_t * (param.rc_reverse.yaw ? 1 : -1);
 
-	if (hover_pose(2) < -0.3)
+	if (hover_pose(2) < -0.3) // 油门不能太低
 		hover_pose(2) = -0.3;
 
 	// if (param.print_dbg)
@@ -651,6 +664,7 @@ void PX4CtrlFSM::publish_attitude_ctrl(const Controller_Output_t &u, const ros::
 // 命令fcu的角速度和推力为0
 void PX4CtrlFSM::publish_killmotor_ctrl(const ros::Time &stamp)
 {
+	ROS_ERROR_ONCE("[ px4ctrlFSM ]killmotor!!");
 	mavros_msgs::AttitudeTarget msg;
 
 	msg.header.stamp = stamp;

@@ -11,6 +11,8 @@ ros::Publisher pos_cmd_pub_;
 ros::Time heartbeat_time_;
 bool receive_traj_ = false;
 
+bool exe_perching_flag= true;
+
 // 保存两条路径
 quadrotor_msgs::PolyTraj trajMsg_, trajMsg_last_;
 // 上一次的位置和yaw角
@@ -60,8 +62,8 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
       publish_cmd(trajMsg.traj_id, p, v0, v0, last_yaw_, 0);  // TODO yaw
       return true;
     }
-    if (trajMsg.order != 5) {
-      ROS_ERROR("[traj_server] Only support trajectory order equals 5 now!");
+    if (trajMsg.order != 5 && trajMsg.order != 7) { 
+      ROS_ERROR("[traj_server] Only support trajectory order equals 5 or 7 now!");
       return false;
     }
     if (trajMsg.duration.size() * (trajMsg.order + 1) != trajMsg.coef_x.size()) {
@@ -70,41 +72,91 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
     }
     // end of validation check
 
-    int piece_nums = trajMsg.duration.size(); // 轨迹里的段数
-    std::vector<double> dura(piece_nums); // 每段的时间
-    std::vector<CoefficientMat> cMats(piece_nums); // 每段的系数
-    for (int i = 0; i < piece_nums; ++i) {
-      int i6 = i * 6;
-      cMats[i].row(0) << trajMsg.coef_x[i6 + 0], trajMsg.coef_x[i6 + 1], trajMsg.coef_x[i6 + 2],
-          trajMsg.coef_x[i6 + 3], trajMsg.coef_x[i6 + 4], trajMsg.coef_x[i6 + 5];
-      cMats[i].row(1) << trajMsg.coef_y[i6 + 0], trajMsg.coef_y[i6 + 1], trajMsg.coef_y[i6 + 2],
-          trajMsg.coef_y[i6 + 3], trajMsg.coef_y[i6 + 4], trajMsg.coef_y[i6 + 5];
-      cMats[i].row(2) << trajMsg.coef_z[i6 + 0], trajMsg.coef_z[i6 + 1], trajMsg.coef_z[i6 + 2],
-          trajMsg.coef_z[i6 + 3], trajMsg.coef_z[i6 + 4], trajMsg.coef_z[i6 + 5];
 
-      dura[i] = trajMsg.duration[i];
+
+    if(trajMsg.order==5)
+    {
+      int piece_nums = trajMsg.duration.size(); // 轨迹里的段数
+      std::vector<double> dura(piece_nums); // 每段的时间
+      std::vector<CoefficientMat> cMats(piece_nums); // 每段的系数
+      for (int i = 0; i < piece_nums; ++i) {
+        int i6 = i * 6;
+        // cMats[i].row(0) << trajMsg.coef_x[i6 + 0], trajMsg.coef_x[i6 + 1], trajMsg.coef_x[i6 + 2],
+        //     trajMsg.coef_x[i6 + 3], trajMsg.coef_x[i6 + 4], trajMsg.coef_x[i6 + 5];
+        // cMats[i].row(1) << trajMsg.coef_y[i6 + 0], trajMsg.coef_y[i6 + 1], trajMsg.coef_y[i6 + 2],
+        //     trajMsg.coef_y[i6 + 3], trajMsg.coef_y[i6 + 4], trajMsg.coef_y[i6 + 5];
+        // cMats[i].row(2) << trajMsg.coef_z[i6 + 0], trajMsg.coef_z[i6 + 1], trajMsg.coef_z[i6 + 2],
+        //     trajMsg.coef_z[i6 + 3], trajMsg.coef_z[i6 + 4], trajMsg.coef_z[i6 + 5];
+        for(int j=0;j<6;++j){
+          cMats[i](0,j)=trajMsg.coef_x[i6+j];
+          cMats[i](1,j)=trajMsg.coef_y[i6+j];
+          cMats[i](2,j)=trajMsg.coef_z[i6+j];
+        }
+        dura[i] = trajMsg.duration[i];
+      }
+      Trajectory traj(dura, cMats); // 生成轨迹对象
+      if (t > traj.getTotalDuration()) { // 生成的轨迹持续时间太短了，现在已经过了规划的时间段了
+        ROS_ERROR("[traj_server] trajectory too short left!");
+        return false;
+      }
+      
+      Eigen::Vector3d p, v, a; // 获取当前时间的p,v,a,j
+      p = traj.getPos(t);
+      v = traj.getVel(t);
+      a = traj.getAcc(t);
+      // NOTE yaw
+      double yaw = trajMsg.yaw;
+      double d_yaw = yaw - last_yaw_;
+      d_yaw = d_yaw >= M_PI ? d_yaw - 2 * M_PI : d_yaw; // 限定在正负pi
+      d_yaw = d_yaw <= -M_PI ? d_yaw + 2 * M_PI : d_yaw;
+      double d_yaw_abs = fabs(d_yaw);
+      if (d_yaw_abs >= 0.02) {
+        yaw = last_yaw_ + d_yaw / d_yaw_abs * 0.02; // yaw的变化率不超过0.02
+      }
+      publish_cmd(trajMsg.traj_id, p, v, a, yaw, 0);  // TODO yaw
+      last_yaw_ = yaw;
+      return true;
+
     }
-    Trajectory traj(dura, cMats); // 生成轨迹对象
-    if (t > traj.getTotalDuration()) { // 生成的轨迹持续时间太短了，现在已经过了规划的时间段了
-      ROS_ERROR("[traj_server] trajectory too short left!");
-      return false;
+    else if(trajMsg.order==7)
+    {
+      int piece_nums = trajMsg.duration.size(); // 轨迹里的段数
+      std::vector<double> dura(piece_nums); // 每段的时间
+      std::vector<CoefficientMat_S4> cMats(piece_nums); // 每段的系数
+      for(int i=0;i<piece_nums;++i){
+        int i8 = i * 8;
+        for(int j=0;j<8;++j){
+          cMats[i](0,j)=trajMsg.coef_x[i8+j];
+          cMats[i](1,j)=trajMsg.coef_y[i8+j];
+          cMats[i](2,j)=trajMsg.coef_z[i8+j];
+        }
+        dura[i]=trajMsg.duration[i];
+      }
+      Trajectory_S4 traj(dura,cMats);
+      if (t > traj.getTotalDuration()) { // 生成的轨迹持续时间太短了，现在已经过了规划的时间段了
+        ROS_ERROR_ONCE("[traj_server] trajectory too short left!");
+        return false;
+      }
+      Eigen::Vector3d p, v, a; // 获取当前时间的p,v,a,j
+      p = traj.getPos(t);
+      v = traj.getVel(t);
+      a = traj.getAcc(t);
+      // NOTE yaw
+      double yaw = trajMsg.yaw;
+      double d_yaw = yaw - last_yaw_;
+      d_yaw = d_yaw >= M_PI ? d_yaw - 2 * M_PI : d_yaw; // 限定在正负pi
+      d_yaw = d_yaw <= -M_PI ? d_yaw + 2 * M_PI : d_yaw;
+      double d_yaw_abs = fabs(d_yaw);
+      if (d_yaw_abs >= 0.02) {
+        yaw = last_yaw_ + d_yaw / d_yaw_abs * 0.02; // yaw的变化率不超过0.02
+      }
+      if(exe_perching_flag)
+        publish_cmd(trajMsg.traj_id, p, v, a, yaw, 0);  // TODO yaw
+      last_yaw_ = yaw;
+      return true;
     }
-    Eigen::Vector3d p, v, a; // 获取当前时间的p,v,a,j
-    p = traj.getPos(t);
-    v = traj.getVel(t);
-    a = traj.getAcc(t);
-    // NOTE yaw
-    double yaw = trajMsg.yaw;
-    double d_yaw = yaw - last_yaw_;
-    d_yaw = d_yaw >= M_PI ? d_yaw - 2 * M_PI : d_yaw; // 限定在正负pi
-    d_yaw = d_yaw <= -M_PI ? d_yaw + 2 * M_PI : d_yaw;
-    double d_yaw_abs = fabs(d_yaw);
-    if (d_yaw_abs >= 0.02) {
-      yaw = last_yaw_ + d_yaw / d_yaw_abs * 0.02; // yaw的变化率不超过0.02
-    }
-    publish_cmd(trajMsg.traj_id, p, v, a, yaw, 0);  // TODO yaw
-    last_yaw_ = yaw;
-    return true;
+
+
   }
   return false;
 }
@@ -117,7 +169,7 @@ void heartbeatCallback(const std_msgs::EmptyConstPtr &msg) {
 // 获取规划出来的轨迹消息
 void polyTrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
   trajMsg_ = *msgPtr; // 更新轨迹消息
-  if (!receive_traj_) { // 第一次接收到消息
+  if (!receive_traj_) { // 第一次接收到消息，初始化last
     trajMsg_last_ = trajMsg_; // 
     receive_traj_ = true;
   }
@@ -148,6 +200,8 @@ void cmdCallback(const ros::TimerEvent &e) {
 int main(int argc, char **argv) {
   ros::init(argc, argv, "traj_server");
   ros::NodeHandle nh("~");
+  nh.getParam("exe_perching_flag",exe_perching_flag);
+
 
   ros::Subscriber poly_traj_sub = nh.subscribe("trajectory", 10, polyTrajCallback); //订阅规划出来的多项式
   ros::Subscriber heartbeat_sub = nh.subscribe("heartbeat", 10, heartbeatCallback); // 订阅心跳信号

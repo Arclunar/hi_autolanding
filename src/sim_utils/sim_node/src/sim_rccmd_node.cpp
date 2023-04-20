@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     ros::Rate loop_rate(looprate);  // 手动指定更新周期
 
     // 发布，所以直接发在这里就能控制他的行为
-    pub_takeoff = n.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land", 10); // 用来起飞
+    pub_takeoff = n.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land", 10); // 用来起飞和降落
     pub_track_trigger = n.advertise<geometry_msgs::PoseStamped>("/triger", 10);
     pub_land_trigger = n.advertise<geometry_msgs::PoseStamped>("/land_triger", 10);
 

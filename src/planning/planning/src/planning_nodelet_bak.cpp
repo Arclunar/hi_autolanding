@@ -532,7 +532,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         // NOTE generate visible regions
         target_predcit.pop_back(); // 删除尾端元素
         way_pts.pop_back();
-        envPtr_->generate_visible_regions(target_predcit, way_pts, // 生成一个区域，waypoint变成可视范围的中间
+        envPtr_->generate_visible_regions(target_predcit, way_pts, // 生成一个区域，，调整waypoint变成可视范围的中间
                                           visible_ps, thetas);
         // 这里修改了way_pts
         visPtr_->visualize_pointcloud(visible_ps, "visible_ps"); // 貌似是在追踪距离处能看到target的范围
@@ -543,9 +543,11 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         for (int i = 0; i < (int)way_pts.size(); ++i) {
           rays.emplace_back(target_predcit[i], way_pts[i]); 
         }
-        visPtr_->visualize_pointcloud(way_pts, "way_pts"); //其实waypoint和visible_ps很多是重合的吧
+        visPtr_->visualize_pointcloud(way_pts, "way_pts"); 
         way_pts.insert(way_pts.begin(), p_start); //在开头处插入一个起始坐标
         envPtr_->pts2path(way_pts, path); // waypoint用Atar连起来生成轨迹
+        visPtr_->visualize_path(path, "corridor_path");
+
       }
 
     //! 生成飞行走廊

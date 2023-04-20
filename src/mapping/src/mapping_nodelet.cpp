@@ -368,8 +368,8 @@ class Nodelet : public nodelet::Nodelet {
 
  public:
   void onInit(void) {
-    ros::NodeHandle nh(getMTPrivateNodeHandle());
-    initThread_ = std::thread(std::bind(&Nodelet::init, this, nh));
+    ros::NodeHandle nh(getMTPrivateNodeHandle()); // 获得句柄，private句柄意思估计是nh(~)
+    initThread_ = std::thread(std::bind(&Nodelet::init, this, nh)); // 创建一个线程，执行init函数，传入参数为this和nh
   }
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };

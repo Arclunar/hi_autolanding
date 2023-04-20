@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(planning)
 
+# 编译选项
 add_compile_options(-std=c++14)
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall")
@@ -14,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   nodelet
   decomp_ros_utils
   nlink_parser
+  vis_utils
 )
 
 catkin_package(
@@ -33,8 +35,6 @@ include_directories(
 # planning node
 add_library(${PROJECT_NAME}_nodelet
 src/${PROJECT_NAME}_nodelet.cpp
-src/RapidTrajectoryGenerator.cpp
-src/SingleAxisTrajectory.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}_nodelet

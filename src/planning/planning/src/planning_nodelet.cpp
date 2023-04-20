@@ -25,6 +25,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
 #include <traj_opt/traj_opt.h>
+#include <traj_opt/traj_opt_perching.h>
 
 #include <Eigen/Core>
 #include <atomic>
@@ -36,9 +37,7 @@
 #include <std_msgs/Int32MultiArray.h> 
 #include "nlink_parser/TofsenseFrame0.h"  //distance detection
 
-// OBVP
-#include "RapidTrajectoryGenerator.h"
-// using namespace OBVP;
+
 
 // 任务
 #include <std_msgs/String.h>
@@ -86,9 +85,6 @@ class Nodelet : public nodelet::Nodelet {
   ros::Publisher cali_pos_pub_;
   ros::Subscriber set_task_sub_;
 
-
-
-
   double last_yaw_;
 
   std::shared_ptr<mapping::OccGridMap> gridmapPtr_;
@@ -96,6 +92,17 @@ class Nodelet : public nodelet::Nodelet {
   std::shared_ptr<visualization::Visualization> visPtr_;
   std::shared_ptr<traj_opt::TrajOpt> trajOptPtr_;
   std::shared_ptr<prediction::Predict> prePtr_;
+
+  // ===============================================
+  // perching
+  // ==============================================
+  std::shared_ptr<traj_opt_perching::TrajOpt_perching> trajPerchingOptPtr_;
+  double landing_circle_r;
+  Trajectory_S4 traj_poly_perching_; // 上一次的轨迹
+  bool perching_flag = false;
+  bool perching_once =false;
+  bool perching_replan_flag = false;
+  bool exe_perching_flag = false;
 
   // NOTE planning for fake target
   bool fake_ = false;
@@ -170,6 +177,36 @@ class Nodelet : public nodelet::Nodelet {
   }
 
 
+  void pub_traj_s4(const Trajectory_S4& traj,const double& yaw,const ros::Time& stamp){
+      quadrotor_msgs::PolyTraj traj_msg;
+      traj_msg.hover = false;
+      traj_msg.order = 7;
+      Eigen::VectorXd durs = traj.getDurations();
+      int piece_num = traj.getPieceNum();
+      traj_msg.duration.resize(piece_num);
+      traj_msg.coef_x.resize(8 * piece_num);
+      traj_msg.coef_y.resize(8 * piece_num);
+      traj_msg.coef_z.resize(8 * piece_num);
+      for(int i=0;i<piece_num;++i){
+        traj_msg.duration[i]=durs[i];
+        CoefficientMat_S4 cMat=traj[i].getCoeffMat(); // 获得矩阵
+        // 传给traj
+        int i8 = i * 8;
+        for(int j=0;j<8;++j){
+            traj_msg.coef_x[i8 + j] = cMat(0, j);
+            traj_msg.coef_y[i8 + j] = cMat(1, j);
+            traj_msg.coef_z[i8 + j] = cMat(2, j);
+        }
+      }
+      // 发布出去
+      traj_msg.start_time = stamp;
+      traj_msg.traj_id = traj_id_++;
+      // NOTE yaw
+      traj_msg.yaw = yaw;
+      traj_pub_.publish(traj_msg);
+  }
+
+
   void pub_traj(const Trajectory& traj, const double& yaw, const ros::Time& stamp) {
     quadrotor_msgs::PolyTraj traj_msg;
     traj_msg.hover = false;
@@ -180,14 +217,7 @@ class Nodelet : public nodelet::Nodelet {
     traj_msg.coef_x.resize(6 * piece_num);  // 重定义维度
     traj_msg.coef_y.resize(6 * piece_num);
     traj_msg.coef_z.resize(6 * piece_num);
-    for (int i = 0; i < piece_num; ++i) {
-      traj_msg.duration[i] = durs(i);
-      CoefficientMat cMat = traj[i].getCoeffMat();
-      int i6 = i * 6;
-      for (int j = 0; j < 6; j++) {
-        traj_msg.coef_x[i6 + j] = cMat(0, j);
-        traj_msg.coef_y[i6 + j] = cMat(1, j);
-    traj_msg.coef_z.resize(6 * piece_num);
+
     for (int i = 0; i < piece_num; ++i) {
       traj_msg.duration[i] = durs(i);
       CoefficientMat cMat = traj[i].getCoeffMat();
@@ -204,7 +234,7 @@ class Nodelet : public nodelet::Nodelet {
     traj_msg.yaw = yaw;
     traj_pub_.publish(traj_msg);
   }
-    }}
+ 
 
   void triger_callback(const geometry_msgs::PoseStampedConstPtr& msgPtr) {
     goal_ << msgPtr->pose.position.x, msgPtr->pose.position.y, 0.9;
@@ -355,11 +385,15 @@ class Nodelet : public nodelet::Nodelet {
 
 
 bool landed_flag = false;
+bool replan_flag = false;
+
+// 降落需要获取的小车的位姿
+Eigen::Quaterniond target_odom_q;
 
 void ctrl_timer_callback(const ros::TimerEvent& event)
 {
     ctrl_heartbeat_pub_.publish(std_msgs::Empty());
-    if(!trigger_cali_ctrl_flag)
+    if(!trigger_cali_ctrl_flag || landed_flag || replan_flag)
       return ;
   
    // 获得目标以及target的odom
@@ -396,49 +430,103 @@ void ctrl_timer_callback(const ros::TimerEvent& event)
     target_q.y() = replanStateMsg_.target.pose.pose.orientation.y;
     target_q.z() = replanStateMsg_.target.pose.pose.orientation.z;
 
-    
+
     // 设置target位置为匀速直线运动之后的时间 ，加一点点的预测
-    Eigen::Vector3d cali_point = target_p + target_v * 0.01;
-    target_p=cali_point;
+    target_p=target_p + target_v * 0.01;
 
-    static Eigen::Vector3d cali_p,cali_v;
+    static Eigen::Vector3d cali_p,cali_v;  // cali控制的位置和速度
+    double yaw; // cali控制的yaw角
 
-    static bool first_flag=true,not_stable_over_head_flag=true;
+
+    static bool first_flag=true; // 是否首次进入
+    static bool stable_over_head_flag=false; // 是否在小车上方稳定
+    static bool _last_stable_over_head_flag=false; // 是否在小车上方稳定
 
 
 
     Eigen::Vector3d delta_p=odom_p-target_p;
     Eigen::Vector3d delta_v=odom_v-target_v;
 
-    // judge if landed
-    if(delta_p.norm()<=0.1)
+    
+    static ros::Time landed_once_time;
+    static bool landed_first_flag=true;
+
+    // 判断是否降落成功
+    // ROS_INFO("delta_p.norm :%f",delta_p.norm());
+    if(std::abs(delta_p.z())<=0.1)
     {
-      landed_flag=true;
-      ROS_WARN("[ planner ] CALI stage : landed success!!!");
-      stop_motors(); 
+      if(landed_first_flag)
+      {
+        landed_once_time = ros::Time::now();
+        landed_first_flag=false;
+        ROS_WARN("[ planner ] CALI stage :  first land detected");        
+        stop_motors(); 
+
+        return;
+      }
+
+      if((ros::Time::now()-landed_once_time).toSec() > 10.0)
+      {
+        landed_flag=true;
+        ROS_WARN("[ planner ] CALI stage : return to planning time callback");
+        return ;
+      }
+
+      if((ros::Time::now()-landed_once_time).toSec() > 3.0)
+      {
+        ROS_WARN("[ planner ] CALI stage : landed success!!!");
+        // 距离足够近，直接stopmotors
+        return;
+      }
       return ;
     }
 
-
-    // if 正上方 稳定跟踪
+    // 判断是否在正上方
     delta_p.z()=0;
-    if(delta_p.norm()<=0.3 && delta_v.norm()<=0.1){
-      not_stable_over_head_flag=false;
+    delta_v.z()=0;
+    if(delta_p.norm()<=0.3 && delta_v.norm()<=0.5){
+      stable_over_head_flag=true;
+      if(_last_stable_over_head_flag != stable_over_head_flag)
+        ROS_WARN("[ planner ] CALI stage : STABLE OVER HEAD  !!! ");
+    }
+    else {
+      stable_over_head_flag=false;
+      if(_last_stable_over_head_flag != stable_over_head_flag)
+        ROS_WARN("[ planner ] CALI stage : NOT STABLE OVER HEAD  !! ");
+    }
+    _last_stable_over_head_flag= stable_over_head_flag;
+
+
+    if(delta_p.norm()>1.0)
+    {
+        ROS_ERROR("[ planner ] CALI stage : replan needed , back to LANDING stage");
+        replan_flag = true; // 切换planning模式
+
     }
 
-    if(!not_stable_over_head_flag)
-        ROS_WARN("[ planner ] CALI stage : STABLE OVER HEAD  !!! ");
-
-    if(first_flag || not_stable_over_head_flag )
+    
+    if(first_flag || !stable_over_head_flag )
     {
       cali_p.x()=target_p.x();
       cali_p.y()=target_p.y();
       cali_p.z()=odom_p.z();
+      
+      cali_p.z()= odom_p.z()>(target_p.z()+1)?odom_p.z():(target_p.z()+0.5); // 高度起码是目标高度高0.5m
+
       cali_v.x()=target_v.x();
       cali_v.y()=target_v.y();
-      //TODO yaw 设置为小车的方向
-      cali_v.z()=0;
+      cali_v.z()=0; // 不下降，等待高度稳定
+
+      // 获取二维码识别的姿态朝向
+      target_odom_q.w()=target_msg_.pose.pose.orientation.w;
+      target_odom_q.x()=target_msg_.pose.pose.orientation.x;
+      target_odom_q.y()=target_msg_.pose.pose.orientation.y;
+      target_odom_q.z()=target_msg_.pose.pose.orientation.z;
+
+      Eigen::Vector3d normalized_x_vector(1,0,0);
+      yaw = atan2((target_odom_q.toRotationMatrix()*normalized_x_vector).y(),(target_odom_q.toRotationMatrix()*normalized_x_vector).x());
       first_flag = false;
+      // in_landing_process(); //由laser控制推力
     }
     else
     {
@@ -449,9 +537,17 @@ void ctrl_timer_callback(const ros::TimerEvent& event)
       cali_p=cali_p+down_speed;
       cali_v.x()=target_v.x();
       cali_v.y()=target_v.y();
-      int plan_hz = 20;
+      // int plan_hz = 20;
       // cali_v.z()=-0.0005 * plan_hz;
-    }
+      
+      // 获取二维码识别的姿态朝向
+      target_odom_q.w()=target_msg_.pose.pose.orientation.w;
+      target_odom_q.x()=target_msg_.pose.pose.orientation.x;
+      target_odom_q.y()=target_msg_.pose.pose.orientation.y;
+      target_odom_q.z()=target_msg_.pose.pose.orientation.z;
+      Eigen::Vector3d normalized_x_vector(1,0,0);
+      yaw = atan2((target_odom_q.toRotationMatrix()*normalized_x_vector).y(),(target_odom_q.toRotationMatrix()*normalized_x_vector).x());
+    }    
 
     //! step publish the desired position and velocity
     quadrotor_msgs::PositionCommand position_cmd_msg;
@@ -461,8 +557,10 @@ void ctrl_timer_callback(const ros::TimerEvent& event)
     position_cmd_msg.velocity.x=cali_v.x();
     position_cmd_msg.velocity.y=cali_v.y();
     position_cmd_msg.velocity.z=cali_v.z();
+    position_cmd_msg.yaw=yaw;
 
-    ROS_WARN("[ planner ] CALI stage : position_cmd published");
+
+    // ROS_WARN("[ planner ] CALI stage : position_cmd published");
     cali_pos_pub_.publish(position_cmd_msg);
 }
 
@@ -671,7 +769,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         std::vector<Eigen::Vector3d> path, way_pts; // 路径和waypoint
 
       if(generate_new_traj_success)   // 预测成功
-        generate_new_traj_success = envPtr_->findVisiblePath(p_start, target_predcit, way_pts, path); 
+        generate_new_traj_success = envPtr_->findVisiblePath(p_start, target_predcit, way_pts, path);  // 穿过一系列可见区的引导路径
 
       std::vector<Eigen::Vector3d> visible_ps;
       std::vector<double> thetas;
@@ -770,7 +868,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       }
       case LANDING:
       {
-        ROS_INFO("[planner] in landing process");
+        ROS_INFO("[planner] task state : LANDING");
 
         //! step 1 : obtain state of robot odom
         while (odom_lock_.test_and_set()) ;
@@ -808,9 +906,12 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         target_q.y() = replanStateMsg_.target.pose.pose.orientation.y;
         target_q.z() = replanStateMsg_.target.pose.pose.orientation.z;
 
-        if (force_hover_ && odom_v.norm() > 0.1) {
-          break;
-        }
+        // Note : target_q就是 land_q，因为检测出的姿态就是降落的姿态
+
+        // if (force_hover_ && odom_v.norm() > 0.1) {
+        //   break;
+        // }
+
 
         //! step 3 : judge if landed
         // static int count_laser = 0;
@@ -842,38 +943,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         //   in_landing_process(); // 将motor的状态改为TRUST_ADJUST_BY_LASER
         // }
 
-
-      // 足够近了，切换到cali模式
-      Eigen::Vector3d landing_dp=target_p-odom_p;
-      Eigen::Vector3d landing_dv=target_v-odom_v;
-      landing_dp.z()=0;
-      landing_dv.z()=0;
-      // if(landing_dp.norm()<0.1 && landing_dv.norm()<target_v.norm()*0.3) // 相对速度小于车的速度乘上比例项
-      if(landing_dp.norm()<0.2)
-      {
-          task_state=CALI;
-          ROS_WARN("[ planner ] LANDING stage : switch to CALI !!!");
-          return ;
-      }
-
-
-      // 足够近了，悬停
-        // if (std::fabs((target_p - odom_p).norm() < 0.1 && odom_v.norm() < 0.1 && target_v.norm() < 0.2)) {
-        //   if (!wait_hover_) {
-        //     pub_hover_p(odom_p, ros::Time::now());
-        //     wait_hover_ = true; // 正在悬停
-        //   }
-        //   ROS_WARN("[planner] close enough ...  HOVERING...");
-        //   break;
-        // }
-
-        // TODO get the orientation fo target and calculate the pose of landing point
-        // target_p = target_p + target_q * land_p_; // 降落时的轨迹的终点位置，land_p_是相对于车的降落点，只有faketarget时才有后两项
-        wait_hover_ = false; // 还没足够进，不要悬停
-
-        target_p.z()+= 1; // 飞到上面1米处
-
-        //! step 4 : obtain map
+        //! step 4 : obtain map 
         while (gridmap_lock_.test_and_set()) 
           ;
         gridmapPtr_->from_msg(map_msg_);
@@ -881,71 +951,297 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         gridmap_lock_.clear(); 
         prePtr_->setMap(*gridmapPtr_); 
 
-        // visualize the ray from drone to target
-        if (envPtr_->checkRayValid(odom_p, target_p)) { // 检查飞机和目标线段是否有障碍物
-          visPtr_->visualize_arrow(odom_p, target_p, "ray", visualization::yellow);
-        } else {
-          visPtr_->visualize_arrow(odom_p, target_p, "ray", visualization::red);
-        }
+        //*****************************
+        // perching
+        //*****************************
+        if (perching_flag)
+        {
+            // 太靠近就悬停
+            ROS_INFO("[ perching planner ]dis_laser_mm : %d",dis_laser_mm);
+            static int count_laser = 0;
+            if( dis_laser_mm < 90 && dis_laser_mm > 5 ) // 如果底部激光探测到这个距离，说明接触到了物体，贴上去
+            {
+              count_laser++;
+              // ROS_WARN("laser count++! count_laser = %d",count_laser);
+            }
+            else
+            {
+              count_laser = 0; // reset
+            }
 
-        //! step 5 : prediction
-        std::vector<Eigen::Vector3d> target_predcit; // 预测路径
-        bool generate_new_traj_success = prePtr_->predict(target_p, target_v, target_predcit); 
-        // 根据目标的为位置和速度得到预测的一堆位置 放在target_predict
-        if (generate_new_traj_success) {
-        Eigen::Vector3d observable_p = target_predcit.back(); // 预测的最终位置
-        visPtr_->visualize_path(target_predcit, "car_predict"); //预测路径可视化
+            if (count_laser >= 2) {
+              landing_finished_ = true;
+              ROS_WARN("[planner] laser detect twice closing LANDING FINISHED!");
+            }
 
-        // 最终位置方圆tracking_dist的边缘画出来，可视边缘
-         std::vector<Eigen::Vector3d> observable_margin;
-        for (double theta = 0; theta <= 2 * M_PI; theta += 0.01) {
-          observable_margin.emplace_back(observable_p + tracking_dist_ * Eigen::Vector3d(cos(theta), sin(theta), 0));
+            if (landing_finished_)  // landed
+            {
+              // stop_motors(); //发布停止电机的消息
+              ROS_WARN("[planner] has landed at the landing position");
+              task_state=LANDED;
+              break;
+            }
+            else // landing process
+            {
+              // in_landing_process(); // 将motor的状态改为TRUST_ADJUST_BY_LASER
+            }
+
+            //* log:到终点不悬停
+            // if (std::fabs((target_p - odom_p).norm() < 0.1)) {
+            // if (!wait_hover_) {
+            //   pub_hover_p(odom_p, ros::Time::now());
+            //   wait_hover_ = true; // 正在悬停
+            //  }
+            //   ROS_WARN("[planner] HOVERING...");
+            //   return;
+            // }
+
+
+
+
+            
+            Eigen::Vector3d dp = target_p + target_v * 0.03 - odom_p; // 假设匀速直线运动的目标未来位置到飞机当前位置的位移
+            
+            if(dp.norm()<2.0)
+            {
+                 ROS_INFO("[ perching planning ] close enough stop replanning");
+                 perching_replan_flag=false;
+            }
+            else{
+               perching_replan_flag=true;
+            }
+
+            if(perching_once && !perching_replan_flag)
+            {
+              ROS_INFO("[ perching planning ] not replan");
+              // task_state=READY;
+              // perching_once = false;
+              break;
+            }
+
+            // if(perching_once && traj_poly_perching_.getTotalDuration()<=1.0) // 太近就不规划了
+            // {
+            //   ROS_INFO("[ perching planning ] close enough stop replanning");
+            //   break;
+            // }
+
+
+
+            Eigen::MatrixXd iniState;
+            iniState.setZero(3,4);
+            bool generate_new_traj_success = false;
+            Trajectory_S4 traj;
+
+            ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.03); // 当成执行过程需要30ms
+            double replan_t = (replan_stamp - replan_stamp_).toSec();
+            
+
+            iniState.setZero();
+            if(replan_t > traj_poly_perching_.getTotalDuration()) // 一开始
+            {
+              iniState.col(0)=odom_p;
+              iniState.col(1)=odom_v;
+            }
+            else  // 上次规划的当前时间点开始规划
+            {
+              // iniState.col(0)=traj_poly_perching_.getPos(replan_t);
+              // iniState.col(1)=traj_poly_perching_.getVel(replan_t);
+              iniState.col(0)=odom_p + 0.03 * odom_v;
+              iniState.col(1)=odom_v;
+              iniState.col(2)=traj_poly_perching_.getAcc(replan_t);
+              iniState.col(3)=traj_poly_perching_.getJer(replan_t);
+            }
+
+
+            std::vector<Eigen::Vector3d> astar_path;
+            Eigen::Vector3d p_start = iniState.col(0);  // 开始位置
+            std::vector<Eigen::Vector3d> target_predcit; // 预测路径
+            std::vector<Eigen::MatrixXd> hPolys;
+            std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> keyPts;
+            bool generate_perching_traj_success = false;
+
+            generate_perching_traj_success= prePtr_->predict(target_p, target_v, target_predcit); // 预测位置
+            generate_perching_traj_success = envPtr_->astar_search(p_start, target_predcit.back(), astar_path); // 从当前位置到预测的终点直接搜出一条Astar
+            envPtr_->generateSFC(astar_path, 2.0, hPolys, keyPts); // 沿着a星路径生成飞行走廊
+            envPtr_->visCorridor(hPolys);                    // 可视化飞行走廊
+            visPtr_->visualize_pairline(keyPts, "keyPts");
+
+            replanStateMsg_.header.stamp = ros::Time::now(); // 记录上次replan的时间
+            replanStateMsg_.iniState.resize(12);
+            Eigen::Map<Eigen::MatrixXd>(replanStateMsg_.iniState.data(),3,4)= iniState;
+
+
+
+            // TODO trajopt里面加入臂障约束，应该是需要用到P的一个转换...
+            // generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,10,traj,true);
+          
+          
+            generate_perching_traj_success = trajPerchingOptPtr_->generate_traj_corridor(iniState,target_p,target_v,target_q,target_predcit,hPolys,traj,false);
+
+            
+          if (generate_perching_traj_success) {
+            //* 可视化
+            visPtr_->visualize_traj(traj, "traj_perching"); // 可视化轨迹
+            Eigen::Vector3d tail_pos = traj.getPos(traj.getTotalDuration()); // 可视化终点的位置和速度方向
+            Eigen::Vector3d tail_vel = traj.getVel(traj.getTotalDuration());
+            visPtr_->visualize_arrow(tail_pos, tail_pos + 0.5 * tail_vel, "tail_vel"); // 最后一个是把箭头消息发布到哪个话题上，估计rviz会订阅这个话题然后可视化出来
+            ROS_INFO("[ perching planning ] trajectory generation success ! ");
+            ROS_WARN("[ perching planning] trajectory max vel : %f",traj.getMaxVelRate());
+            ROS_WARN("[ perching planning] trajectory tail vel : %f",traj.getVel(traj.getTotalDuration()));
+
+
+           //* 处理yaw角
+            
+            double yaw;
+            dp.z()=0;
+            if(dp.norm()>1.0)
+             yaw = std::atan2(dp.y(), dp.x()); // 距离大于1m时 yaw角对准目标未来位置
+            else // 和目标方向一样
+           {
+              yaw=last_yaw_;
+              // Eigen::Vector3d normalized_x_vector(1,0,0);
+              // yaw = atan2((target_odom_q.toRotationMatrix()*normalized_x_vector).y(),(target_odom_q.toRotationMatrix()*normalized_x_vector).x());
+            }
+            last_yaw_ = yaw;
+            traj_poly_perching_=traj;
+            // ROS_INFO("[ perching planning ] tarj_totalDuration %f",traj_poly_perching_.getTotalDuration());
+            replan_stamp_ = replan_stamp;      // 记录为上一次的时间戳
+
+
+            //*发布轨迹
+            // TODO
+            
+            pub_traj_s4(traj,yaw,replan_stamp);
+          
+            perching_once = true;
+
+            break;
+           }
+
+          if (!generate_perching_traj_success) {
+              ROS_ERROR("[ planning] perching trajectory generation failed");
+              // task_state=READY;
+              break;
           }
-        visPtr_->visualize_path(observable_margin, "observable_margin"); // 在rviz看一下就知道是什么了
         }
+        else
+        {
 
-        //! step 6 : setting replan state
-        Eigen::MatrixXd iniState;
-        iniState.setZero(3, 3); // 三列，p,v,a
-        ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.03); // 预测终点的时间戳
-        double replan_t = (replan_stamp - replan_stamp_).toSec(); 
+          // 足够近了，切换到cali模式
+          Eigen::Vector3d landing_dp = target_p - odom_p;
+          Eigen::Vector3d landing_dv = target_v - odom_v;
+          landing_dp.z() = 0;
+          landing_dv.z() = 0;
+          // if(landing_dp.norm()<0.1 && landing_dv.norm()<target_v.norm()*0.3) // 相对速度小于车的速度乘上比例项
+          if (landing_dp.norm() < 0.2)
+          {
+          task_state = CALI;
+          replan_flag = false;
+          ROS_WARN("[ planner ] LANDING stage : switch to CALI !!!");
+          return;
+          }
 
-        if (force_hover_ || replan_t > traj_poly_.getTotalDuration()) { // 接收到的路径的
-        // should replan from the hover state
-        iniState.col(0) = odom_p;
-         iniState.col(1) = odom_v;
-         } else {
-        // should replan from the last trajectory
-        iniState.col(0) = traj_poly_.getPos(replan_t);  // 从上一次的轨迹开始重规划，获取从上一次重规划经过若干点后的在轨迹上的状态
-        iniState.col(1) = traj_poly_.getVel(replan_t);
-        iniState.col(2) = traj_poly_.getAcc(replan_t);
-       }
-        replanStateMsg_.header.stamp = ros::Time::now();
-        replanStateMsg_.iniState.resize(9); // 长度为9的数组
-        Eigen::Map<Eigen::MatrixXd>(replanStateMsg_.iniState.data(), 3, 3) = iniState; // 赋值过去
+          // 足够近了，悬停
+          // if (std::fabs((target_p - odom_p).norm() < 0.1 && odom_v.norm() < 0.1 && target_v.norm() < 0.2)) {
+          //   if (!wait_hover_) {
+          //     pub_hover_p(odom_p, ros::Time::now());
+          //     wait_hover_ = true; // 正在悬停
+          //   }
+          //   ROS_WARN("[planner] close enough ...  HOVERING...");
+          //   break;
+          // }
 
+          // TODO get the orientation fo target and calculate the pose of landing point
+          // target_p = target_p + target_q * land_p_; // 降落时的轨迹的终点位置，land_p_是相对于车的降落点，只有faketarget时才有后两项
+          wait_hover_ = false; // 还没足够进，不要悬停
 
-        //! step 7 : path searching
-        Eigen::Vector3d p_start = iniState.col(0); // 开始位置
-        std::vector<Eigen::Vector3d> path, way_pts; // 路径和waypoint
-        
-        if (generate_new_traj_success) { // prediction for car
-          generate_new_traj_success = envPtr_->short_astar(p_start, target_predcit.back(), path); // 从当前位置到预测的终点直接搜出一条Astar
-        ROS_WARN_STREAM("[ planner ] landing stage : path.size() = " << path.size());
+          target_p.z() += 1; // 飞到上面1米处
 
-        Trajectory traj;
-        
-        if (generate_new_traj_success) {
-              visPtr_->visualize_path(path, "astar"); 
+          //! step 4 : obtain map
+          while (gridmap_lock_.test_and_set())
+          ;
+          gridmapPtr_->from_msg(map_msg_);
+          replanStateMsg_.occmap = map_msg_;
+          gridmap_lock_.clear();
+          prePtr_->setMap(*gridmapPtr_);
+
+          // visualize the ray from drone to target
+          if (envPtr_->checkRayValid(odom_p, target_p))
+          { // 检查飞机和目标线段是否有障碍物
+          visPtr_->visualize_arrow(odom_p, target_p, "ray", visualization::yellow);
+          }
+          else
+          {
+          visPtr_->visualize_arrow(odom_p, target_p, "ray", visualization::red);
+          }
+
+          //! step 5 : prediction
+          std::vector<Eigen::Vector3d> target_predcit; // 预测路径
+          bool generate_new_traj_success = prePtr_->predict(target_p, target_v, target_predcit);
+          // 根据目标的为位置和速度得到预测的一堆位置 放在target_predict
+          if (generate_new_traj_success)
+          {
+          Eigen::Vector3d observable_p = target_predcit.back();   // 预测的最终位置
+          visPtr_->visualize_path(target_predcit, "car_predict"); // 预测路径可视化
+
+          // 最终位置方圆tracking_dist的边缘画出来，可视边缘
+          std::vector<Eigen::Vector3d> observable_margin;
+          for (double theta = 0; theta <= 2 * M_PI; theta += 0.01)
+          {
+        observable_margin.emplace_back(observable_p + tracking_dist_ * Eigen::Vector3d(cos(theta), sin(theta), 0));
+          }
+          visPtr_->visualize_path(observable_margin, "observable_margin"); // 在rviz看一下就知道是什么了
+          }
+
+          //! step 6 : setting replan state
+          Eigen::MatrixXd iniState;
+          iniState.setZero(3, 3);                                          // 三列，p,v,a
+          ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.03); // 预测终点的时间戳
+          double replan_t = (replan_stamp - replan_stamp_).toSec();
+
+          if (force_hover_ || replan_t > traj_poly_.getTotalDuration())
+          { // 接收到的路径的
+          // should replan from the hover state
+          iniState.col(0) = odom_p;
+          iniState.col(1) = odom_v;
+          }
+          else
+          {
+          // should replan from the last trajectory
+          iniState.col(0) = traj_poly_.getPos(replan_t); // 从上一次的轨迹开始重规划，获取从上一次重规划经过若干点后的在轨迹上的状态
+          iniState.col(1) = traj_poly_.getVel(replan_t);
+          iniState.col(2) = traj_poly_.getAcc(replan_t);
+          }
+          replanStateMsg_.header.stamp = ros::Time::now();
+          replanStateMsg_.iniState.resize(9);                                            // 长度为9的数组
+          Eigen::Map<Eigen::MatrixXd>(replanStateMsg_.iniState.data(), 3, 3) = iniState; // 赋值过去
+
+          //! step 7 : path searching
+          Eigen::Vector3d p_start = iniState.col(0);  // 开始位置
+          std::vector<Eigen::Vector3d> path, way_pts; // 路径和waypoint
+
+          if (generate_new_traj_success)
+          { // prediction for car
+            // 尝试用atar search
+          // generate_new_traj_success = envPtr_->short_astar(p_start, target_predcit.back(), path); // 从当前位置到预测的终点直接搜出一条Astar
+          generate_new_traj_success = envPtr_->astar_search(p_start, target_predcit.back(), path); // 从当前位置到预测的终点直接搜出一条Astar
+
+          // ROS_WARN_STREAM("[ planner ] landing stage : path.size() = " << path.size());
+
+          Trajectory traj;
+
+          if (generate_new_traj_success)
+          {
+        visPtr_->visualize_path(path, "astar");
 
         //! step 8 : corridor generating
-         ROS_WARN("corridor generating");
+        ROS_WARN("corridor generating");
         // NOTE corridor generating
         std::vector<Eigen::MatrixXd> hPolys;
         std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> keyPts;
 
         envPtr_->generateSFC(path, 2.0, hPolys, keyPts); // 生成飞行走廊
-        envPtr_->visCorridor(hPolys); // 可视化飞行走廊
+        envPtr_->visCorridor(hPolys);                    // 可视化飞行走廊
         visPtr_->visualize_pairline(keyPts, "keyPts");
 
         //! step 9 : trajectory optimization
@@ -954,63 +1250,81 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         Eigen::MatrixXd finState; // 末端状态
         finState.setZero(3, 3);
         finState.col(0) = path.back(); // 轨迹的终点
-        finState.col(1) = target_v; // 和目标一样的速度
+        finState.col(1) = target_v;    // 和目标一样的速度
         // finState.col(1).z()+=-0.2; // 末端添加一个向下的速度
-        finState.col(0) = target_predcit.back(); //如果收到降落信号，则终点是和目标一样的位置
+        finState.col(0) = target_predcit.back(); // 如果收到降落信号，则终点是和目标一样的位置
         generate_new_traj_success = trajOptPtr_->generate_traj(iniState, finState, target_predcit, hPolys, traj);
-          visPtr_->visualize_traj(traj, "traj");
-        }
+        visPtr_->visualize_traj(traj, "traj");
+          }
 
-        //! step 10 : collision check 
-        bool valid = false;
-        if (generate_new_traj_success) {
-          valid = validcheck(traj, replan_stamp); // 从replan_stemp开始的1s内是否碰撞，已经是之后的事情了
-        } else {
-          replanStateMsg_.state = -2;
-          replanState_pub_.publish(replanStateMsg_);
-       }
+          //! step 10 : collision check
+          bool valid = false;
+          if (generate_new_traj_success)
+          {
+        valid = validcheck(traj, replan_stamp); // 从replan_stemp开始的1s内是否碰撞，已经是之后的事情了
+          }
+          else
+          {
+        replanStateMsg_.state = -2;
+        replanState_pub_.publish(replanStateMsg_);
+          }
 
-        if (valid) { // 从replan_stemp开始的1s内无碰撞
-          force_hover_ = false;
-          ROS_WARN("[planner] LANDING REPLAN SUCCESS");
-          replanStateMsg_.state = 0; // 
-          replanState_pub_.publish(replanStateMsg_);
-          Eigen::Vector3d dp = target_p + target_v * 0.03 - iniState.col(0); // 假设匀速直线运动的目标未来位置到飞机当前位置的位移
-          // NOTE : if the trajectory is known, watch that direction
-          double yaw = std::atan2(dp.y(), dp.x()); // yaw角对准目标未来位置
-          yaw = last_yaw_;
-          last_yaw_ = yaw;
-          pub_traj(traj, yaw, replan_stamp); //发布轨迹，在这里发布轨迹
-          traj_poly_ = traj; // 记录为上一次的轨迹
-          replan_stamp_ = replan_stamp; // 记录为上一次的时间戳
-        } // 生成的轨迹从replan开始1s内有碰撞 
-        else if (force_hover_) { // 如果轨迹有问题，且有force_hover_，则悬停
-          ROS_ERROR("[planner] REPLAN FAILED, HOVERING...");
-          replanStateMsg_.state = 1;
-          replanState_pub_.publish(replanStateMsg_);
-          return;
-        } else if (!validcheck(traj_poly_, replan_stamp_)) { // 轨迹有问题，检查生成轨迹上一个轨迹中在1s无碰撞 ，这里应该是写反了
-          force_hover_ = true;
-          ROS_FATAL("[planner] EMERGENCY STOP!!!"); // 紧急悬停
-          replanStateMsg_.state = 2;
-          replanState_pub_.publish(replanStateMsg_);
-          pub_hover_p(iniState.col(0), replan_stamp);                 
-          break;
-        } else {
-          ROS_ERROR("[planner] REPLAN FAILED, EXECUTE LAST TRAJ..."); // 检查生成轨迹上一个轨迹中在1s无碰撞
-          replanStateMsg_.state = 3;
-          replanState_pub_.publish(replanStateMsg_);
-          break;  // current generated traj invalid but last is valid
-        }
-        visPtr_->visualize_traj(traj, "traj"); // 可视化轨迹，发布的话题名称为traj，对应航点为traj_wpts
+          if (valid)
+          { // 从replan_stemp开始的1s内无碰撞
+        force_hover_ = false;
+        ROS_WARN("[planner] LANDING REPLAN SUCCESS");
+        replanStateMsg_.state = 0; //
+        replanState_pub_.publish(replanStateMsg_);
+        Eigen::Vector3d dp = target_p + target_v * 0.03 - iniState.col(0); // 假设匀速直线运动的目标未来位置到飞机当前位置的位移
+        // NOTE : if the trajectory is known, watch that direction
+        double yaw = std::atan2(dp.y(), dp.x()); // yaw角对准目标未来位置
+        yaw = last_yaw_;
+        last_yaw_ = yaw;
+        pub_traj(traj, yaw, replan_stamp); // 发布轨迹，在这里发布轨迹
+        traj_poly_ = traj;                 // 记录为上一次的轨迹
+        replan_stamp_ = replan_stamp;      // 记录为上一次的时间戳
+          }                                // 生成的轨迹从replan开始1s内有碰撞
+          else if (force_hover_)
+          { // 如果轨迹有问题，且有force_hover_，则悬停
+        ROS_ERROR("[planner] REPLAN FAILED, HOVERING...");
+        replanStateMsg_.state = 1;
+        replanState_pub_.publish(replanStateMsg_);
+        return;
+          }
+          else if (!validcheck(traj_poly_, replan_stamp_))
+          { // 轨迹有问题，检查生成轨迹上一个轨迹中在1s无碰撞 ，这里应该是写反了
+        force_hover_ = true;
+        ROS_FATAL("[planner] EMERGENCY STOP!!!"); // 紧急悬停
+        replanStateMsg_.state = 2;
+        replanState_pub_.publish(replanStateMsg_);
+        pub_hover_p(iniState.col(0), replan_stamp);
+        break;
+          }
+          else
+          {
+        ROS_ERROR("[planner] REPLAN FAILED, EXECUTE LAST TRAJ..."); // 检查生成轨迹上一个轨迹中在1s无碰撞
+        replanStateMsg_.state = 3;
+        replanState_pub_.publish(replanStateMsg_);
+        break; // current generated traj invalid but last is valid
+          }
+          visPtr_->visualize_traj(traj, "traj"); // 可视化轨迹，发布的话题名称为traj，对应航点为traj_wpts
+          }
         }
         break;
       }
       case CALI:
       {
         ROS_INFO_ONCE("[ planner ] in calibration process");
+        if(replan_flag)
+        {
+          task_state = LANDING;
+          ROS_WARN_ONCE("[ planner ] CALI stage : switch to LANDING state");
+        }
         if(!landed_flag)
+        {
+          replan_flag = false;
           trigger_cali_ctrl_flag = true;
+        }
 
         else{
           trigger_cali_ctrl_flag = false; // 关闭ctrl_callback
@@ -1023,7 +1337,8 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       case LANDED:
       {
         task_state_msg.state="LANDED";
-        ROS_INFO("[planner] ALREADY landed");
+        in_landing_process(); // 保持低推力landed状态
+        stop_motors();
         return ;
         break;
       }
@@ -1081,11 +1396,6 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         double yaw=0;
         pub_traj(traj, yaw, replan_stamp); //发布轨迹，在这里发布轨迹
 
-
-
-
-
-
         break;
       }
       default:
@@ -1128,6 +1438,9 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     // set parameters of planning
     int plan_hz = 10;
     
+    nh.getParam("using_perching",perching_flag);
+    nh.getParam("perching_replan_flag",perching_replan_flag);
+    nh.getParam("exe_perching_flag",exe_perching_flag);
     nh.getParam("plan_hz", plan_hz);
     nh.getParam("tracking_dur", tracking_dur_); 
     nh.getParam("tracking_dist", tracking_dist_); 
@@ -1141,6 +1454,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     envPtr_ = std::make_shared<env::Env>(nh, gridmapPtr_);
     visPtr_ = std::make_shared<visualization::Visualization>(nh); // 可视化
     trajOptPtr_ = std::make_shared<traj_opt::TrajOpt>(nh); // 轨迹优化对象
+    
     prePtr_ = std::make_shared<prediction::Predict>(nh);
 
     heartbeat_pub_ = nh.advertise<std_msgs::Empty>("heartbeat", 10); // 发布心跳，表示planner还活着
@@ -1158,8 +1472,9 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     // ***************** 校正任务
     cali_pos_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("/position_cmd",1);
 
+    // ***************** Perching
+    trajPerchingOptPtr_=std::make_shared<traj_opt_perching::TrajOpt_perching>(nh); // 实例化
 
-  
 
       // 一般模式
     ctrl_timer_ = nh.createTimer(ros::Duration(1.0/ ctrl_hz),&Nodelet::ctrl_timer_callback,this);

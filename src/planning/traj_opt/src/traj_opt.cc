@@ -1,6 +1,8 @@
 #include <traj_opt/traj_opt.h>
 
 #include <random>
+#include <chrono>
+
 #include <traj_opt/geoutils.hpp>
 #include <traj_opt/lbfgs_raw.hpp>
 
@@ -140,6 +142,8 @@ static void backwardP(const Eigen::Ref<const Eigen::MatrixXd>& inP,
   }
   return;
 }
+
+
 static void addLayerPGrad(const Eigen::Ref<const Eigen::VectorXd>& p,
                           const std::vector<Eigen::MatrixXd>& cfgPolyVs,
                           const Eigen::Ref<const Eigen::MatrixXd>& gradInPs,
@@ -174,23 +178,23 @@ static inline double objectiveFunc(void* ptrObj, // TrajOpt对象
                                    const int n) { 
   TrajOpt& obj = *(TrajOpt*)ptrObj;
 
-  Eigen::Map<const Eigen::VectorXd> t(x, obj.dim_t_);
+  Eigen::Map<const Eigen::VectorXd> t(x, obj.dim_t_); // dim_t比N少1，用了时间约束消除
   Eigen::Map<const Eigen::VectorXd> p(x + obj.dim_t_, obj.dim_p_);
   Eigen::Map<Eigen::VectorXd> gradt(grad, obj.dim_t_);
   Eigen::Map<Eigen::VectorXd> gradp(grad + obj.dim_t_, obj.dim_p_);
-  double deltaT = x[obj.dim_t_ + obj.dim_p_];
+  double deltaT = x[obj.dim_t_ + obj.dim_p_]; // 最后一项
 
   Eigen::VectorXd T(obj.N_);
   Eigen::MatrixXd P(3, obj.N_ - 1);
   // T_sigma = T_s + deltaT^2
-  double sumT = obj.sum_T_ + deltaT * deltaT; 
+  double sumT = obj.sum_T_ + deltaT * deltaT; //最后一项是最后一个时间
   forwardT(t, sumT, T);
   forwardP(p, obj.cfgVs_, P);
 
   obj.jerkOpt_.generate(P, T);
   double cost = obj.jerkOpt_.getTrajJerkCost();
   obj.jerkOpt_.calGrads_CT();
-  obj.addTimeIntPenalty(cost);
+  obj.addTimeIntPenalty(cost); // 虽然传导到无约束变量，但是写的时候还是加上一个走廊惩罚项
   obj.addTimeCost(cost);
   obj.jerkOpt_.calGrads_PT();
 
@@ -298,7 +302,7 @@ void TrajOpt::setBoundConds(const Eigen::MatrixXd& iniState,
   Eigen::MatrixXd P(3, N_ - 1);
   for (int i = 0; i < N_ - 1; ++i) {
     int k = cfgVs_[i].cols() - 1;
-    P.col(i) = cfgVs_[i].rightCols(k).rowwise().sum() / (1.0 + k) + cfgVs_[i].col(0);
+    P.col(i) = cfgVs_[i].rightCols(k).rowwise().sum() / (1.0 + k) + cfgVs_[i].col(0); // 从这里得到初始的位置
   }
   backwardP(P, cfgVs_, p_);
   jerkOpt_.reset(initS, finalS, N_);
@@ -351,7 +355,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
 
   // NOTE: one corridor two pieces
   //
-  dim_t_ = N_ - 1;
+  dim_t_ = N_ - 1; //时间比段数少1
   dim_p_ = 0;
   for (const auto& cfgV : cfgVs_) {
     dim_p_ += cfgV.cols() - 1;
@@ -385,6 +389,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
 }
 
 // NOTE just for landing the car of YTK
+// 用来land的generate_traj
 bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
                             const Eigen::MatrixXd& finState,
                             const std::vector<Eigen::Vector3d>& target_predcit,
@@ -395,11 +400,13 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
   if (cfgHs_.size() == 1) {
     cfgHs_.push_back(cfgHs_[0]);
   }
+
+  // 变成V表示
   if (!extractVs(cfgHs_, cfgVs_)) {
     ROS_ERROR("extractVs fail!");
     return false;
   }
-  N_ = 2 * cfgHs_.size();
+  N_ = 2 * cfgHs_.size(); // 一个走廊里有2个多项式
 
   // NOTE wonderful trick ?? how wonderful
   sum_T_ = tracking_dur_;
@@ -408,20 +415,20 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
   dim_t_ = N_ - 1;
   dim_p_ = 0;
   for (const auto& cfgV : cfgVs_) {
-    dim_p_ += cfgV.cols() - 1;
+    dim_p_ += cfgV.cols() - 1; // p变量的个数等于角点数-1
   }
   // std::cout << "dim_p_: " << dim_p_ << std::endl;
   p_.resize(dim_p_);
   t_.resize(dim_t_);
   x_ = new double[dim_p_ + dim_t_ + 1];
   Eigen::VectorXd T(N_);
-  Eigen::MatrixXd P(3, N_ - 1);
+  Eigen::MatrixXd P(3, N_ - 1); // 实际的waypoint个数
 
-  tracking_ps_ = target_predcit;
+  tracking_ps_ = target_predcit; // 只用到预测的位置
 
   setBoundConds(iniState, finState);
-  x_[dim_p_ + dim_t_] = 0.1;
-  int opt_ret = optimize();
+  x_[dim_p_ + dim_t_] = 0.1; // 多出来的那部分时间初始化
+  int opt_ret = optimize(); //在这里优化
   if (opt_ret < 0) {
     return false;
   }
@@ -454,7 +461,7 @@ void TrajOpt::addTimeIntPenalty(double& cost) {
     s1 = 0.0;
     innerLoop = K_ + 1;
 
-    const auto& hPoly = cfgHs_[i / 2];
+    const auto& hPoly = cfgHs_[i / 2]; //取了一个多面体，因为限定一个多面体里面有两段
     for (int j = 0; j < innerLoop; ++j) {
       s2 = s1 * s1;
       s3 = s2 * s1;
@@ -472,7 +479,7 @@ void TrajOpt::addTimeIntPenalty(double& cost) {
 
       omg = (j == 0 || j == innerLoop - 1) ? 0.5 : 1.0;
 
-      if (grad_cost_p_corridor(pos, hPoly, grad_tmp, cost_tmp)) {
+      if (grad_cost_p_corridor(pos, hPoly, grad_tmp, cost_tmp)) { // 走廊约束
         gradViolaPc = beta0 * grad_tmp.transpose();
         gradViolaPt = alpha * grad_tmp.transpose() * vel;
         jerkOpt_.gdC.block<6, 3>(i * 6, 0) += omg * step * gradViolaPc;
@@ -499,7 +506,7 @@ void TrajOpt::addTimeIntPenalty(double& cost) {
   }
 }
 
-// 加入约束
+// 关键是绝对时间约束
 void TrajOpt::addTimeCost(double& cost) {
   const auto& T = jerkOpt_.T1;
   int piece = 0;
@@ -515,31 +522,31 @@ void TrajOpt::addTimeCost(double& cost) {
   double cost_tmp;
   Eigen::Matrix<double, 6, 3> gradViolaPc;
 
-  for (int i = 0; i < M; ++i) {
+  for (int i = 0; i < M; ++i) { // 对每个跟踪的点
     double rho = exp2(-3.0 * i / M); // 2的n次方
     while (t - t_pre > T(piece)) {
-      t_pre += T(piece);
+      t_pre += T(piece); // 确定当前的时间在哪一段上，t_pre是之前的时间
       piece++;
     }
-    s1 = t - t_pre;
+    s1 = t - t_pre; //相对时间
     s2 = s1 * s1;
     s3 = s2 * s1;
     s4 = s2 * s2;
     s5 = s4 * s1;
     beta0 << 1.0, s1, s2, s3, s4, s5; // 多项式的基
     beta1 << 0.0, 1.0, 2.0 * s1, 3.0 * s2, 4.0 * s3, 5.0 * s4; // 多项式导数的基
-    const auto& c = jerkOpt_.b.block<6, 3>(piece * 6, 0); //从括号位置开始取尖括号大小的子矩阵
+    const auto& c = jerkOpt_.b.block<6, 3>(piece * 6, 0); // 获得之前的系数
     pos = c.transpose() * beta0; // 获得位置
     vel = c.transpose() * beta1; // 获得速度
     Eigen::Vector3d target_p = tracking_ps_[i]; 
 
-    if (landing_) {
+    if (landing_) { //在generate中指定了是land还是track
       if (grad_cost_p_landing(pos, target_p, grad_tmp, cost_tmp)) {
         gradViolaPc = beta0 * grad_tmp.transpose();
         cost += rho * step * cost_tmp;
-        jerkOpt_.gdC.block<6, 3>(piece * 6, 0) += rho * step * gradViolaPc;
+        jerkOpt_.gdC.block<6, 3>(piece * 6, 0) += rho * step * gradViolaPc; // 直接通到c上
         if (piece > 0) {
-          jerkOpt_.gdT.head(piece).array() += -rho * step * grad_tmp.dot(vel);
+          jerkOpt_.gdT.head(piece).array() += -rho * step * grad_tmp.dot(vel); // 有时间约束step = tracking_dt_;
         }
       }
     } else { //跟踪约束
@@ -575,13 +582,13 @@ bool TrajOpt::grad_cost_p_corridor(const Eigen::Vector3d& p,
   bool ret = false;
   gradp.setZero();
   costp = 0;
-  for (int i = 0; i < hPoly.cols(); ++i) {
-    Eigen::Vector3d norm_vec = hPoly.col(i).head<3>();
-    double pen = norm_vec.dot(p - hPoly.col(i).tail<3>() + clearance_d_ * norm_vec);
+  for (int i = 0; i < hPoly.cols(); ++i) { // hPloy就是一个多面体，不同列表示不同的面
+    Eigen::Vector3d norm_vec = hPoly.col(i).head<3>(); //头3个数是法线，后3个数是原点
+    double pen = norm_vec.dot(p - hPoly.col(i).tail<3>() + clearance_d_ * norm_vec); // = dp和发现做点积+ clearance*法线点积自己
     if (pen > 0) {
       double pen2 = pen * pen;
       gradp += rhoP_ * 3 * pen2 * norm_vec;
-      costp += rhoP_ * pen2 * pen;
+      costp += rhoP_ * pen2 * pen; // 3次方约束
       ret = true;
     }
   }
@@ -646,10 +653,11 @@ bool TrajOpt::grad_cost_p_tracking(const Eigen::Vector3d& p,
   gradp.setZero();
   costp = 0;
 
+  // 约束不太近不太远，所以elastic
   double pen = dr2 - upper; 
   if (pen > 0) { // 距离太远了
     double grad;
-    costp += penF(pen, grad);
+    costp += penF(pen, grad); // 近和远用不同约束
     gradp.head(2) += 2 * grad * dp.head(2);
     ret = true;
   } else {
@@ -687,14 +695,14 @@ bool TrajOpt::grad_cost_p_landing(const Eigen::Vector3d& p,
   gradp.setZero();
   costp = 0;
 
-  double pen = dr2 - tolerance_d_ * tolerance_d_;
+  double pen = dr2 - tolerance_d_ * tolerance_d_; // 希望每个p保持在一定的范围内，明显就是最快接近的方式
   if (pen > 0) {
     double pen2 = pen * pen;
-    gradp.head(2) += 6 * pen2 * dp.head(2);
+    gradp.head(2) += 6 * pen2 * dp.head(2); //从6可见这是3次方的G
     costp += pen * pen2;
     ret = true;
   }
-  pen = dz2 - tolerance_d_ * tolerance_d_;
+  pen = dz2 - tolerance_d_ * tolerance_d_; // 数值方向
   if (pen > 0) {
     double pen2 = pen * pen;
     gradp.z() += 6 * pen2 * dp.z();
@@ -708,6 +716,7 @@ bool TrajOpt::grad_cost_p_landing(const Eigen::Vector3d& p,
   return ret;
 }
 
+// 看懂这里即可
 bool TrajOpt::grad_cost_visibility(const Eigen::Vector3d& p,
                                    const Eigen::Vector3d& center,
                                    const Eigen::Vector3d& vis_p,
@@ -720,12 +729,12 @@ bool TrajOpt::grad_cost_visibility(const Eigen::Vector3d& p,
   double norm_a = a.norm();
   double norm_b = b.norm();
   double theta_less = theta - theta_clearance_ > 0 ? theta - theta_clearance_ : 0;
-  double cosTheta = cos(theta_less);
+  double cosTheta = cos(theta_less); // cos(theta - theta_c)
   double pen = cosTheta - inner_product / norm_a / norm_b;
   if (pen > 0) {
     double grad = 0;
-    costp = penF2(pen, grad);
-    gradp = grad * -(norm_a * b - inner_product / norm_a * a) / norm_a / norm_a / norm_b;
+    costp = penF2(pen, grad); // 三次方
+    gradp = grad * -(norm_a * b - inner_product / norm_a * a) / norm_a / norm_a / norm_b; // 上不导下导，下导上不导
     // gradp = grad * (norm_b * cosTheta / norm_a * a - b);
     gradp *= rhosVisibility_;
     costp *= rhosVisibility_;

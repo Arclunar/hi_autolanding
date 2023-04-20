@@ -311,6 +311,7 @@ Command_Data_t::Command_Data_t()
     rcv_stamp = ros::Time(0);
 }
 
+// position_cmd传过来
 void Command_Data_t::feed(quadrotor_msgs::PositionCommandConstPtr pMsg)
 {
 
@@ -367,7 +368,7 @@ void Battery_Data_t::feed(sensor_msgs::BatteryStateConstPtr pMsg)
     {
         if ((rcv_stamp - last_print_t).toSec() > 10)
         {
-            ROS_INFO("[px4ctrl] Voltage=%.3f, percentage=%.3f", volt, percentage);
+            // ROS_INFO("[px4ctrl] Voltage=%.3f, percentage=%.3f", volt, percentage);
             last_print_t = rcv_stamp;
         }
     }

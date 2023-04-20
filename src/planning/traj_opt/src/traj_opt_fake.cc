@@ -232,7 +232,7 @@ bool TrajOpt::generate_traj(const Eigen::MatrixXd& iniState,
   backwardT(T, t_);
   for (int i = 0; i < N_ - 1; ++i) {
     int k = cfgVs_[i].cols() - 1;
-    P.col(i) = cfgVs_[i].rightCols(k).rowwise().sum() / (1.0 + k) + cfgVs_[i].col(0);
+    P.col(i) = cfgVs_[i].rightCols(k).rowwise().sum() / (1.0 + k) + cfgVs_[i].col(0); //算出初始航点
   }
   backwardP(P, cfgVs_, p_);
   jerkOpt_.reset(initS, finalS, N_);

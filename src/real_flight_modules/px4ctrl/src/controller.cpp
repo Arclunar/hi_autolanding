@@ -49,6 +49,8 @@ quadrotor_msgs::Px4ctrlDebug Controller::update_alg0(
 
   // 限制了飞机的倾角
   translational_acc = (Gravity + computeLimitedTotalAccFromThrustForce(translational_acc - Gravity, 1.0)).eval(); // 质量设置为1，把速度加回去，eval是计算的意思而已
+  
+  // 主要的算法
   minimumSingularityFlatWithDrag(param.mass, param.gra,
                                  des.v, translational_acc, des.j, des.yaw, des.yaw_rate,
                                  odom.q, desired_attitude, u.bodyrates, thrust); //解算出来推力和姿态，turust和desiresd_attitude
@@ -73,11 +75,11 @@ quadrotor_msgs::Px4ctrlDebug Controller::update_alg0(
   debug.des_q_z = desired_attitude.z();
 
   // 对齐fcu的坐标， odom.q.inverse() * desired_attitude 是期望姿态和当前姿态的旋转，这里切换成从fcu转过去的最终姿态
-  u.q = imu.q * odom.q.inverse() * desired_attitude; // Align with FCU frame， 
+  u.q = imu.q * odom.q.inverse() * desired_attitude; // Align with FCU frame， // 得到这个就够了其实
   const Eigen::Vector3d bodyrate_candidate = u.bodyrates + feedback_bodyrates; // 
 
   // limit the angular acceleration 角加速度，也就是限制角度变化量
-  u.bodyrates = computeLimitedAngularAcc(bodyrate_candidate);
+  u.bodyrates = computeLimitedAngularAcc(bodyrate_candidate); //算出来一个body rates，一个body
   // u.bodyrates += feedback_bodyrates;
 
   // Used for thrust-accel mapping estimation
@@ -193,6 +195,8 @@ bool Controller::flatnessWithDrag(const Eigen::Vector3d &vel,
   dw0 = w_term * a0 + dw_term * v0;
   dw1 = w_term * a1 + dw_term * v1;
   dw2 = w_term * a2 + dw_term * v2;
+
+
   dz_term0 = jer(0) + dh_over_m * dw0;
   dz_term1 = jer(1) + dh_over_m * dw1;
   dz_term2 = jer(2) + dh_over_m * dw2;
@@ -250,9 +254,15 @@ void Controller::minimumSingularityFlatWithDrag(const double mass,
   // dv is the rotor drag effect in vertical direction, typical value is 0.35
   // dh is the rotor drag effect in horizontal direction, typical value is 0.25
   // cp is the second-order drag effect, typical valye is 0.01
-  const double dh = 0.10;
-  const double dv = 0.23;
-  const double cp = 0.01;
+  // const double dh = 0.10;
+  // const double dv = 0.23;
+  // const double cp = 0.01;
+
+  // 不考虑线性风阻效应
+  const double dh = 0.0;
+  const double dv = 0.0;
+  const double cp = 0.0;
+
 
   // veps is a smnoothing constant, do not change it
   // veps cannot be set a too small value, 
@@ -267,7 +277,7 @@ void Controller::minimumSingularityFlatWithDrag(const double mass,
                        thrust, quat, omg,
                        mass, grav, dh, dv, cp, veps)) // 推力和姿态算出来了
   {
-    att = Eigen::Quaterniond(quat(0), quat(1), quat(2), quat(3));
+    att = Eigen::Quaterniond(quat(0), quat(1), quat(2), quat(3)); // 计算出期望的姿态
     omg_old = omg;
     thrust_old = thrust;
   }
@@ -697,7 +707,7 @@ Eigen::Vector3d Controller::computePIDErrorAcc(
   double x_pos_error = std::isnan(des.p(0)) ? 0.0 : std::max(std::min(des.p(0) - odom.p(0), 1.0), -1.0); // 限制在正负1
   double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error) - odom.v(0), 1.0), -1.0);
   acc_error(0) = Kv(0) * x_vel_error;
-
+ 
   // y acceleration
   double y_pos_error = std::isnan(des.p(1)) ? 0.0 : std::max(std::min(des.p(1) - odom.p(1), 1.0), -1.0);
   double y_vel_error = std::max(std::min((des.v(1) + Kp(1) * y_pos_error) - odom.v(1), 1.0), -1.0);

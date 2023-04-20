@@ -201,7 +201,7 @@ public:
 	void resetThrustMapping(void);
 
 private:
-	static constexpr double kMinNormalizedCollectiveAcc_ = 3;
+	static constexpr double kMinNormalizedCollectiveAcc_ = 0.5;
 	static constexpr double kAlmostZeroValueThreshold_ = 0.001;
 	static constexpr double kAlmostZeroThrustThreshold_ = 0.01;
 	static constexpr double kMaxBodyratesFeedback_ = 4;

@@ -319,6 +319,7 @@ struct iteration_data_t
  *  @param  fv      The value of f(v).
  *  @param  du      The value of f'(v).
  */
+#ifndef CUBIC_MINIMIZER_LBFGS
 #define CUBIC_MINIMIZER_LBFGS(cm, u, fu, du, v, fv, dv) \
     d = (v) - (u);                                      \
     theta = ((fu) - (fv)) * 3 / d + (du) + (dv);        \
@@ -337,6 +338,10 @@ struct iteration_data_t
     r = p / q;                                          \
     (cm) = (u) + r * d;
 
+#endif //CUBIC_MINIMIZER_LBFGS
+
+
+
 /**
  * Find a minimizer of an interpolated cubic function.
  *  @param  cm      The minimizer of the interpolated cubic.
@@ -349,6 +354,7 @@ struct iteration_data_t
  *  @param  xmin    The maximum value.
  *  @param  xmin    The minimum value.
  */
+#ifndef CUBIC_MINIMIZER2_LBFGS
 #define CUBIC_MINIMIZER2_LBFGS(cm, u, fu, du, v, fv, dv, xmin, xmax) \
     d = (v) - (u);                                                   \
     theta = ((fu) - (fv)) * 3 / d + (du) + (dv);                     \
@@ -378,7 +384,7 @@ struct iteration_data_t
     {                                                                \
         (cm) = (xmin);                                               \
     }
-
+#endif
 /**
  * Find a minimizer of an interpolated quadratic function.
  *  @param  qm      The minimizer of the interpolated quadratic.

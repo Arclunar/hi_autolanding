@@ -8,7 +8,7 @@ pose_solver : 1     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang
 ctrl_freq_max   : 100.0
 use_bodyrate_ctrl: false
 max_manual_vel: 1.0
-max_angle: 30  # Attitude angle limit in degree. A negative value means no limit.
+max_angle: -0.1  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 13.2 # 4S battery
 
 rc_reverse: #
@@ -25,7 +25,7 @@ auto_takeoff_land:
     takeoff_land_speed: 0.3 # m/s
 
 thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(Unit:N): F=K1*Voltage^K2*(K3*u^2+(1-K3)*u). 
-    print_value: true # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating. // 让他输出出来
+    print_value: false # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating. // 让他输出出来
     accurate_thrust_model: false  # This can always enabled if don't require accurate control performance :-)
     # accurate thrust mapping parameters
     K1: 0.7583 # Needs precise calibration!
@@ -37,13 +37,13 @@ thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(
 
 
 gain: 
-    # Cascade PID controller. Recommend to read the code. // 调这里 ，用debug模式调吧
-    Kp0: 2.0
-    Kp1: 2.0 
-    Kp2: 2.0
-    Kv0: 2.0
-    Kv1: 2.0
-    Kv2: 2.0
+    # Cascade PID controller. Recommend to read the code. // 调这里 ，用debug模式调吧,这里是p项
+    Kp0: 3.0
+    Kp1: 3.0
+    Kp2: 3.0
+    Kv0: 3.0
+    Kv1: 3.0
+    Kv2: 3.0
     # ↓↓↓ No use now --
     Kvi0: 0.0
     Kvi1: 0.0

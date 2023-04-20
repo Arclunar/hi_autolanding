@@ -152,20 +152,20 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
     
     ROS_WARN("[traj_vis] traj_msg received");
 
+    if(trajMsg.order==5)
+    {
     // 根据轨迹和时间获取位置
     int piece_nums = trajMsg.duration.size();
     std::vector<double> dura(piece_nums);
     std::vector<CoefficientMat> cMats(piece_nums);
-        for (int i = 0; i < piece_nums; ++i) {
-      int i6 = i * 6;
-      cMats[i].row(0) << trajMsg.coef_x[i6 + 0], trajMsg.coef_x[i6 + 1], trajMsg.coef_x[i6 + 2],
-          trajMsg.coef_x[i6 + 3], trajMsg.coef_x[i6 + 4], trajMsg.coef_x[i6 + 5];
-      cMats[i].row(1) << trajMsg.coef_y[i6 + 0], trajMsg.coef_y[i6 + 1], trajMsg.coef_y[i6 + 2],
-          trajMsg.coef_y[i6 + 3], trajMsg.coef_y[i6 + 4], trajMsg.coef_y[i6 + 5];
-      cMats[i].row(2) << trajMsg.coef_z[i6 + 0], trajMsg.coef_z[i6 + 1], trajMsg.coef_z[i6 + 2],
-          trajMsg.coef_z[i6 + 3], trajMsg.coef_z[i6 + 4], trajMsg.coef_z[i6 + 5];
-
-    dura[i] = trajMsg.duration[i];
+    for (int i = 0; i < piece_nums; ++i) {
+        int i6 = i * 6;
+        for(int j=0;j<6;++j){
+          cMats[i](0,j)=trajMsg.coef_x[i6+j];
+          cMats[i](1,j)=trajMsg.coef_y[i6+j];
+          cMats[i](2,j)=trajMsg.coef_z[i6+j];
+        }
+        dura[i] = trajMsg.duration[i];
     }
 
     Trajectory traj(dura,cMats);
@@ -210,8 +210,8 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
         p=traj.getPos(t); //TODO 位置还没写，不用写
         v=traj.getVel(t);
         a=traj.getAcc(t);
-        ROS_WARN("test p : %f ",p.x());
-        ROS_WARN("test v : %f ",v.x());
+        // ROS_WARN("test p : %f ",p.x());
+        // ROS_WARN("test v : %f ",v.x());
 
 
         vel_marker.points[0].x=p.x();
@@ -240,6 +240,98 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
     _acc_traj_vis_pub.publish(acc_list_msg);
     ROS_WARN("[traj_vis] acc_list_msg published");
+    }
+
+    if(trajMsg.order==7)
+    {
+    // 根据轨迹和时间获取位置
+    int piece_nums = trajMsg.duration.size();
+    std::vector<double> dura(piece_nums);
+    std::vector<CoefficientMat_S4> cMats(piece_nums);
+    for (int i = 0; i < piece_nums; ++i) {
+        int i6 = i * 8;
+        for(int j=0;j<8;++j){
+          cMats[i](0,j)=trajMsg.coef_x[i6+j];
+          cMats[i](1,j)=trajMsg.coef_y[i6+j];
+          cMats[i](2,j)=trajMsg.coef_z[i6+j];
+        }
+        dura[i] = trajMsg.duration[i];
+    }
+
+    Trajectory_S4 traj(dura,cMats);
+    auto duration = traj.getTotalDuration(); // 获取总时长
+
+    Eigen::Vector3d p, v, a; // 获取当前时间的p,v,a,j
+
+   
+    visualization_msgs::Marker clear_previous_msg;
+    clear_previous_msg.action=visualization_msgs::Marker::DELETEALL;  // 删除所有arrow
+
+    vel_marker.type = visualization_msgs::Marker::ARROW;
+    vel_marker.action = visualization_msgs::Marker::ADD;
+    vel_marker.header.frame_id = "world";
+    vel_marker.id = 0;
+    vel_marker.points.resize(2);
+    setMarkerPosition(vel_marker, 0, 0, 0);
+    setMarkerScale(vel_marker, 0.02,0.05,0.01);
+    setMarkerColor(vel_marker,1,0,1,0 ); // green
+
+    acc_marker.type=visualization_msgs::Marker::ARROW;
+    acc_marker.action=visualization_msgs::Marker::ADD;
+    acc_marker.header.frame_id="world";
+    acc_marker.id=0;
+    acc_marker.points.resize(2);
+    setMarkerPosition(acc_marker, 0, 0, 0);
+    setMarkerScale(acc_marker, 0.02,0.05,0.01);
+    setMarkerColor(acc_marker,1,1,0,0 ); // red
+
+
+    visualization_msgs::MarkerArray vel_list_msg;
+    vel_list_msg.markers.clear();
+    vel_list_msg.markers.push_back(clear_previous_msg);
+
+    visualization_msgs::MarkerArray acc_list_msg;
+    acc_list_msg.markers.clear();
+    acc_list_msg.markers.push_back(clear_previous_msg);
+
+    for (double t = 0; t < duration; t += 0.3) {   
+        // 在这里进行可视化
+        // path.push_back(traj.getPos(t)); // 按时间获取获取点
+        p=traj.getPos(t); //TODO 位置还没写，不用写
+        v=traj.getVel(t);
+        a=traj.getAcc(t);
+        // ROS_WARN("test p : %f ",p.x());
+        // ROS_WARN("test v : %f ",v.x());
+
+
+        vel_marker.points[0].x=p.x();
+        vel_marker.points[0].y=p.y() - 1.0;  // NOTE : 在旁边可视化出来
+        vel_marker.points[0].z=p.z();
+        vel_marker.points[1].x= p.x()+ 0.05 * v.x();
+        vel_marker.points[1].y= p.y()+ 0.05 * v.y() - 1.0;
+        vel_marker.points[1].z= p.z()+ 0.05 * v.z();
+
+        acc_marker.points[0].x=p.x();
+        acc_marker.points[0].y=p.y() - 2.0;
+        acc_marker.points[0].z=p.z();
+        acc_marker.points[1].x= p.x()+ 0.05 * a.x();
+        acc_marker.points[1].y= p.y()+ 0.05 * a.y() - 2.0;
+        acc_marker.points[1].z= p.z()+ 0.05 * a.z();
+        
+        vel_list_msg.markers.push_back(vel_marker);
+        acc_list_msg.markers.push_back(acc_marker);
+        vel_marker.id+=1;
+        acc_marker.id+=1;
+        // vel_marker.points.clear();
+
+    }
+    _vel_traj_vis_pub.publish(vel_list_msg);
+    ROS_WARN("[traj_vis] vel_list_msg published");
+
+    _acc_traj_vis_pub.publish(acc_list_msg);
+    ROS_WARN("[traj_vis] acc_list_msg published");
+    }
+
 }
 
 

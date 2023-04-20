@@ -1,6 +1,5 @@
 <launch>
   <group ns="drone0">
-
     <!-- <node pkg="nodelet" type="nodelet" name="plan_manage" args="manager" output="screen">
       <param name="num_worker_threads" value="16"/>
     </node> -->
@@ -14,6 +13,8 @@
       <remap from="~replanState" to="replanState"/>
       <!-- <remap from="~target" to="/object_odom_dtc2brig"/> -->
       <remap from="~target" to="/target_ekf_node/target_odom"/>
+      <!-- 换成真正的tag的位姿 -->
+      <!-- <remap from="~target" to="/vins_fusion/iris_true_odom/apriltag_odom"/>  -->
       <remap from="~triger" to="/triger"/>
       <remap from="~land_triger" to="/land_triger"/>
 
@@ -22,7 +23,38 @@
 
       <param name="K" value="8"/>
       <param name="vmax" value="6.0"/>
-      <param name="amax" value="2.5"/>
+      <param name="amax" value="4.5"/>
+
+      <!-- perching -->
+      <!-- 空间在 /drone0/planning/* -->
+      <param name="K_perching" value="16"/>
+      <param name="vmax_perching" value="6.0"/>
+      <param name="amax_perching" value="4.0"/>
+      <param name="using_perching" value="true"/>
+      <param name="thrust_max" value="17.0"/>
+      <param name="thrust_min" value="5.0"/>
+      <param name="omega_max" value="1.0"/>
+      <param name="omega_yaw_max" value="0.5"/>
+      <param name="v_plus" value="0.5"/>
+      <param name="robot_l" value="0.00"/>
+      <param name="robot_r" value="0.2"/>
+      <param name="platform_r" value="1.0"/>
+      <param name="rhoVt" value="100000.0"/>
+      <param name="rhoThrust" value="10000.0"/>
+      <param name="rhoOmega" value="100000.0"/>
+      <param name="rhoPerchingCollision" value="1000000.0"/>
+      <param name="rhoLanding" value="100000000.0"/>
+      <param name="pause_debug" value="false"/>
+      <param name="theta_cone" value="0.3"/>
+      <param name="landing_circle" value="2.3"/>
+      <param name="landing_ld" value="0.8"/>
+      <param name="using_cone" value="true"/>
+      <param name="rhoT_perching" value="100000.0"/>
+      <param name="rhoP_perching" value="10000000.0"/>
+      <param name="rhoV_perching" value="100000.0"/>
+      <param name="rhoA_perching" value="100000.0"/>
+      <param name="perching_replan_flag" value="true"/>
+
       <param name="rhoT" value="100.0"/>
       <param name="rhoP" value="10000.0"/>
       <param name="rhoV" value="1000.0"/>
@@ -32,11 +64,11 @@
       <param name="theta_clearance" value="0.6"/>
       <param name="clearance_d" value="0.2"/>
       <param name="tolerance_d" value="0.2"/>
-      <param name="tracking_dist" value="1.0"/>
+      <param name="tracking_dist" value="5.0"/>
       <param name="tracking_dur" value="3.0"/>
       <!-- 预测的时间 -->
       <param name="tracking_dt" value="0.2"/>
-      <param name="tracking_z" value="1.2"/> 
+      <param name="tracking_z" value="6"/> 
       <param name="debug" value="false"/>
       <param name="fake" value="false"/>
 
@@ -50,6 +82,8 @@
       <remap from="~trajectory" to="trajectory"/>
       <remap from="~heartbeat" to="heartbeat"/>
       <param name="time_forward" value="1.0" type="double"/>
+      <param name="exe_perching_flag" value="true"/>
+
     </node>
   </group>
 </launch>

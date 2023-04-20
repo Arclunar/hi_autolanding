@@ -48,7 +48,7 @@ class NodeComparator {
 };
 
 class Env {
-  static constexpr int MAX_MEMORY = 1 << 18;
+  static constexpr int MAX_MEMORY = 1 << 25; // 2的18次方，改成2的25次方
   static constexpr double MAX_DURATION = 0.2;
 
  private:
@@ -296,7 +296,7 @@ class Env {
 
     while (idx < path_len - 1) {
       int next_idx = idx;
-      // looking forward -> get a farest next_idx
+      // looking forward -> get a farest next_idx  找到最远的包含在bounding_box里面的path里面的点作为next_idx
       while (next_idx + 1 < path_len && checkRayValid(path[idx], path[next_idx + 1], bbox_width)) {
         next_idx++;
       }
@@ -306,8 +306,8 @@ class Env {
       line.push_back(path[next_idx]);
       keyPts.emplace_back(path[idx], path[next_idx]);
       getPointCloudAroundLine(line, maxWidth, obs_pc);
-      decomp_util.set_obs(obs_pc);
-      decomp_util.dilate(line);
+      decomp_util.set_obs(obs_pc); // 障碍物点云
+      decomp_util.dilate(line); // 膨胀
       Polyhedron3D poly = decomp_util.get_polyhedrons()[0];
       decompPolys.push_back(poly);
 
@@ -510,6 +510,8 @@ class Env {
     return ret;
   }
 
+
+  // 引导路径
   inline bool findVisiblePath(const Eigen::Vector3d& start_p,
                               const std::vector<Eigen::Vector3d>& targets,
                               std::vector<Eigen::Vector3d>& way_pts,
@@ -528,7 +530,7 @@ class Env {
       for (const auto& idx : idx_path) {
         path.push_back(mapPtr_->idx2pos(idx));
       }
-      way_pts.push_back(mapPtr_->idx2pos(start_idx));
+      way_pts.push_back(mapPtr_->idx2pos(start_idx)); // waypoint是对应于每个target上visible reigion的点
     }
     return true;
   }
@@ -643,13 +645,14 @@ class Env {
     return ret;
   }
 
-  inline void visible_pair(const Eigen::Vector3d& center,
-                           Eigen::Vector3d& seed,
+  //  
+  inline void visible_pair(const Eigen::Vector3d& center, // 传入 target[i]，
+                           Eigen::Vector3d& seed,  // 传入 seeds[i]
                            Eigen::Vector3d& visible_p,
                            double& theta) {
     Eigen::Vector3d dp = seed - center;
     double theta0 = atan2(dp.y(), dp.x());
-    double d_theta = mapPtr_->resolution / desired_dist_ / 2;
+    double d_theta = mapPtr_->resolution / desired_dist_ / 2; // desired_dist是tracking_dist 
     double t_l, t_r;
     for (t_l = theta0 - d_theta; t_l > theta0 - M_PI; t_l -= d_theta) {
       Eigen::Vector3d p = center;
@@ -674,8 +677,8 @@ class Env {
     visible_p.x() += desired_dist_ * cos(theta_v);
     visible_p.y() += desired_dist_ * sin(theta_v);
     theta = (t_r - t_l) / 2;
-    double theta_c = theta < theta_clearance_ ? theta : theta_clearance_;
-    if (theta0 - t_l < theta_c) {
+    double theta_c = theta < theta_clearance_ ? theta : theta_clearance_; // 论文里面的clearance angle，如果半角小那就theta作为安全角度 
+    if (theta0 - t_l < theta_c) { // 太靠近边缘了，往中间推一点，如果半角小就把waypoint推到中间，所以seed就是在tk时的轨迹位置p(t_k)
       seed = center;
       seed.x() += desired_dist_ * cos(t_l + theta_c);
       seed.y() += desired_dist_ * sin(t_l + theta_c);
@@ -687,16 +690,22 @@ class Env {
     return;
   }
 
-  inline void generate_visible_regions(const std::vector<Eigen::Vector3d>& targets,
-                                       std::vector<Eigen::Vector3d>& seeds,
+
+  /// @brief 根据预测的路径生成一系列的seeds作为waypoint，使得waypoint在每个targets[i]的扇形区域内
+  /// @param targets 
+  /// @param seeds 
+  /// @param visible_ps 
+  /// @param thetas 
+  inline void generate_visible_regions(const std::vector<Eigen::Vector3d>& targets, // 预测路径
+                                       std::vector<Eigen::Vector3d>& seeds, 
                                        std::vector<Eigen::Vector3d>& visible_ps,
                                        std::vector<double>& thetas) {
-    assert(targets.size() == seeds.size());
+    assert(targets.size() == seeds.size()); // 判断他们要是相等长度的
     visible_ps.clear();
     thetas.clear();
     Eigen::Vector3d visible_p;
     double theta = 0;
-    int M = targets.size();
+    int M = targets.size(); // 每个zk生成生成一个扇形
     for (int i = 0; i < M; ++i) {
       visible_pair(targets[i], seeds[i], visible_p, theta);
       visible_ps.push_back(visible_p);
@@ -715,12 +724,12 @@ class Env {
   inline bool short_astar(const Eigen::Vector3d& start_p,
                           const Eigen::Vector3d& end_p,
                           std::vector<Eigen::Vector3d>& path) {
-    ROS_WARN("in short astar!");
+    // ROS_WARN("in short astar!");
     Eigen::Vector3i start_idx = mapPtr_->pos2idx(start_p);
     Eigen::Vector3i end_idx = mapPtr_->pos2idx(end_p);
 
-    ROS_WARN("start_idx : %d %d %d ",start_idx.x(),start_idx.y(),start_idx.z());
-    ROS_WARN("end_idx : %d %d %d ",end_idx.x(),end_idx.y(),end_idx.z());
+    // ROS_WARN("start_idx : %d %d %d ",start_idx.x(),start_idx.y(),start_idx.z());
+    // ROS_WARN("end_idx : %d %d %d ",end_idx.x(),end_idx.y(),end_idx.z());
 
 
     if (start_idx == end_idx) {
@@ -809,8 +818,8 @@ class Env {
       // 修改，把ptr=curPtr->parent 改成  ptr=curPtr，ptr->parent != nullptr改成 ptr!=nullptr包含上终止点和开始点
       for (NodePtr ptr = curPtr; ptr!= nullptr; ptr = ptr->parent) {
         path.push_back(mapPtr_->idx2pos(ptr->idx));
-        ROS_WARN(" PATH length : %d",++count);
-        ROS_WARN("PATH added %d %d %d",ptr->idx.x(),ptr->idx.y(),ptr->idx.z());
+        // ROS_WARN(" PATH length : %d",++count);
+        // ROS_WARN("PATH added %d %d %d",ptr->idx.x(),ptr->idx.y(),ptr->idx.z());
       }
       std::reverse(path.begin(), path.end());
     }
@@ -829,7 +838,7 @@ class Env {
       if (mapPtr_->pos2idx(p0) == mapPtr_->pos2idx(p1)) {
         continue;
       }
-      if (!checkRayValid(p0, p1, 1.5)) {
+      if (!checkRayValid(p0, p1, 1.5)) { // 直线不可行则搜索Astar
         short_path.clear();
         short_astar(p0, p1, short_path);
         for (const auto& p : short_path) {

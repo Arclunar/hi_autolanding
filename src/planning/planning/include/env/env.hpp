@@ -743,8 +743,19 @@ class Env {
       return ptr->idx == end_idx;
     };
     auto calulateHeuristic = [&](const NodePtr& ptr) { // 计算H
+      // Eigen::Vector3i dp = end_idx - ptr->idx;
+      // ptr->h = std::sqrt(1.0 * dp.squaredNorm());
+
       Eigen::Vector3i dp = end_idx - ptr->idx;
-      ptr->h = std::sqrt(1.0 * dp.squaredNorm());
+      int dx = dp.x();
+      int dy = dp.y();
+      int dz = dp.z();
+      ptr->h = abs(dx) + abs(dy) + abs(dz);
+      double dx0 = (start_idx - end_idx).x();
+      double dy0 = (start_idx - end_idx).y();
+      double cross = fabs(dx * dy0 - dy * dx0) + abs(dz);
+      ptr->h += 0.001 * cross;
+
     };
     // initialization of datastructures
     std::priority_queue<NodePtr, std::vector<NodePtr>, NodeComparator> open_set;

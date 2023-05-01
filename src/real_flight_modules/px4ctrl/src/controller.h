@@ -55,6 +55,8 @@ public:
 	Parameter_t &param;
 
 	Eigen::Vector3d Kp;
+	Eigen::Vector3d Kpd;
+
 	Eigen::Vector3d Kv;
 	Eigen::Vector3d Kvi;
 	Eigen::Vector3d Kvd;

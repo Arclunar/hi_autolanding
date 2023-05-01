@@ -160,6 +160,7 @@ class Visualization {
     if (got == publisher_map_.end()) {
       ros::Publisher pub = nh_.advertise<nav_msgs::Path>(topic, 10);
       publisher_map_[topic] = pub;
+      // ROS_WARN("[ vis ] create topic for trajectory");
     }
     nav_msgs::Path path_msg;
     geometry_msgs::PoseStamped tmpPose;
@@ -173,6 +174,8 @@ class Visualization {
     path_msg.header.frame_id = "world";
     path_msg.header.stamp = ros::Time::now();
     publisher_map_[topic].publish(path_msg);
+      // ROS_WARN("[ vis ] publish trajectory");
+
   }
 
   template <class BALLS, class TOPIC>

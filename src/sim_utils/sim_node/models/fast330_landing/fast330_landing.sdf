@@ -30,6 +30,11 @@
      <pose> 0.08 0 -0.03 0.0 1.047 0</pose>
     </include>
 
+    <!-- <include>
+      <uri>model://bottom_box</uri>
+      <pose> 0.0 0 -0.03 0.0 0.0 0.0</pose>
+    </include> -->
+
     <joint name="fpv_cam_joint" type="fixed">
       <child>hi_fpv_cam::link</child>
       <parent>hi_iris::base_link</parent>

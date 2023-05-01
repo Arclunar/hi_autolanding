@@ -7,18 +7,18 @@
     <arg name="my_model" default="iris" />
 
     <!-- 飞机位姿 -->
-    <arg name="x" default="35"/>
-    <arg name="y" default="70"/>
+    <arg name="x" default="140"/>
+    <arg name="y" default="140"/>
     <arg name="z" default="-2"/>
     <arg name="R" default="0"/>
     <arg name="P" default="0"/>
-    <arg name="Y" default="1.0"/>
+    <arg name="Y" default="0.0"/>
 
         <!-- 车的位姿 -->
-    <arg name="car_x" default="36.0"/>
-    <arg name="car_y" default="70.0"/>
-    <arg name="car_z" default="-5.0"/>
-    <arg name="car_yaw" default="1.0"/>
+    <arg name="car_x" default="141.0"/>
+    <arg name="car_y" default="140.0"/>
+    <arg name="car_z" default="2.0"/>
+    <arg name="car_yaw" default="0.0"/>
 
     <!-- vehicle model and world -->
     <arg name="est" default="ekf2"/>
@@ -33,7 +33,7 @@
     <!-- <arg name="empty_world" default="/home/anifan/hiauto-landing/autolanding_ws/src/sim_utils/sim_node/worlds/valley.world"/>  -->
 
 
-    <arg name="world" value="$(arg world_dir)/$(arg tree_world)"/>
+    <arg name="world" value="$(arg world_dir)/$(arg empty_world)"/>
 
     <arg name="sdf" default="/home/anifan/hiauto-landing/autolanding_ws/src/sim_utils/sim_node/models/fast330_landing/fast330_landing.sdf"/>
 

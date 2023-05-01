@@ -25,7 +25,7 @@ class TrajOpt_perching {
   double rhoPerchingCollision_;
 
 // 远离多面体
-  double clearance_d_=0.2;
+  double clearance_d_=0.01;
 
   // 降落添加的
   double rhoLanding = 1000000;
@@ -87,7 +87,7 @@ class TrajOpt_perching {
                             const std::vector<Eigen::MatrixXd>& hPolys,
                             Trajectory_S4& traj,
                             bool using_cone_,
-                            const double& t_replan = -1.0) ;
+                            const double& t_replan = 1.0) ;
 
 // 可行性检查
   bool feasibleCheck(Trajectory_S4& traj);

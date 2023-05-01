@@ -8,6 +8,9 @@ Controller::Controller(Parameter_t &param_) : param(param_)
   Kp(0) = param.gain.Kp0;
   Kp(1) = param.gain.Kp1;
   Kp(2) = param.gain.Kp2;
+  Kpd(0) = param.gain.Kpd0;
+  Kpd(1) = param.gain.Kpd1;
+  Kpd(2) = param.gain.Kpd2;
   Kv(0) = param.gain.Kv0;
   Kv(1) = param.gain.Kv1;
   Kv(2) = param.gain.Kv2;
@@ -17,6 +20,8 @@ Controller::Controller(Parameter_t &param_) : param(param_)
   Kvd(0) = param.gain.Kvd0;
   Kvd(1) = param.gain.Kvd1;
   Kvd(2) = param.gain.Kvd2;
+
+
   KAng(0) = param.gain.KAngR;
   KAng(1) = param.gain.KAngP;
   KAng(2) = param.gain.KAngY;
@@ -694,6 +699,9 @@ Eigen::Vector3d Controller::computeFeedBackControlBodyrates(
   return bodyrates;
 }
 
+
+
+
 Eigen::Vector3d Controller::computePIDErrorAcc(
     const Odom_Data_t &odom,
     const Desired_State_t &des,
@@ -703,20 +711,78 @@ Eigen::Vector3d Controller::computePIDErrorAcc(
   // with a PID controller
   Eigen::Vector3d acc_error;
 
+  static double last_x_pos_error = 0;
+  static double last_y_pos_error = 0;
+  static double last_z_pos_error = 0;
+
+  static double last_x_vel_error = 0;
+  static double last_y_vel_error = 0;
+  static double last_z_vel_error = 0;
+
+  static bool vel_only_flag = true;
+
   // x acceleration
   double x_pos_error = std::isnan(des.p(0)) ? 0.0 : std::max(std::min(des.p(0) - odom.p(0), 1.0), -1.0); // 限制在正负1
-  double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error) - odom.v(0), 1.0), -1.0);
-  acc_error(0) = Kv(0) * x_vel_error;
+  double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error + Kpd(0) * (x_pos_error - last_x_pos_error)) - odom.v(0), 1.0), -1.0);
+  
+  if(vel_only_flag)
+    x_vel_error = std::max(std::min(des.v(0) - odom.v(0),1.0),-1.0);
+  double d_x_vel_error = x_vel_error - last_x_vel_error;
+  // std::cout<<"d_x_vel_error"<<15*d_x_vel_error<<std::endl;
+  // std::cout<<" kv(0) x_vel_error" << Kv(0) * x_vel_error <<std::endl;
+  acc_error(0) = Kv(0) * x_vel_error + Kvd(0) * (x_vel_error - last_x_vel_error );
+
  
   // y acceleration
   double y_pos_error = std::isnan(des.p(1)) ? 0.0 : std::max(std::min(des.p(1) - odom.p(1), 1.0), -1.0);
-  double y_vel_error = std::max(std::min((des.v(1) + Kp(1) * y_pos_error) - odom.v(1), 1.0), -1.0);
-  acc_error(1) = Kv(1) * y_vel_error;
+  double y_vel_error = std::max(std::min((des.v(1) + Kp(1) * y_pos_error + Kpd(1) * (y_pos_error - last_y_pos_error)) - odom.v(1), 1.0), -1.0);
+  
+  if(vel_only_flag)
+    y_vel_error = std::max(std::min(des.v(1) - odom.v(1),1.0),-1.0);
+  acc_error(1) = Kv(1) * y_vel_error + Kvd(1) * (y_vel_error - last_y_vel_error );
+
+
 
   // z acceleration
   double z_pos_error = std::isnan(des.p(2)) ? 0.0 : std::max(std::min(des.p(2) - odom.p(2), 1.0), -1.0);
-  double z_vel_error = std::max(std::min((des.v(2) + Kp(2) * z_pos_error) - odom.v(2), 1.0), -1.0);
-  acc_error(2) = Kv(2) * z_vel_error;
+  double z_vel_error = std::max(std::min((des.v(2) + Kp(2) * z_pos_error + Kpd(2) * (z_pos_error - last_z_pos_error)) - odom.v(2), 1.0), -1.0);
+  
+  if(vel_only_flag)
+    z_vel_error = std::max(std::min(des.v(2) - odom.v(2),1.0),-1.0);
+  acc_error(2) = Kv(2) * z_vel_error + Kvd(2) * (z_vel_error - last_z_vel_error );
+  // std::cout<<"Kpd(2) * (z_pos_error - last_z_pos_error) = " <<Kpd(2) * (z_pos_error - last_z_pos_error)<<std::endl;
+
+  last_x_pos_error = x_pos_error;
+  last_y_pos_error = y_pos_error;
+  last_z_pos_error = z_pos_error;
+
+  last_x_vel_error = x_vel_error;
+  last_y_vel_error = y_vel_error;
+  last_z_vel_error = z_vel_error;
+
+
+
+  //   if(fabs(des.p(0) - odom.p(0))>1.0)
+  // ROS_ERROR("[px4ctrl] pos_error_x > 1.0 ");
+
+  // if(fabs((des.v(0) + Kp(0) * x_pos_error) - odom.v(0))>1.0)
+  // ROS_ERROR("[px4ctrl] vel_error_x > 1.0 ");
+
+    // if(fabs(des.p(1) - odom.p(1))>1.0)
+  // ROS_ERROR("[px4ctrl] pos_error_y > 1.0 ");
+
+    // if(fabs(des.p(1) - odom.p(1))>1.0)
+  // ROS_ERROR("[px4ctrl] pos_error_y > 1.0 ");
+
+  //   if(fabs((des.v(1) + Kp(1) * x_pos_error) - odom.v(1))>1.0)
+  // ROS_ERROR("[px4ctrl] vel_error_y > 1.0 ");
+
+  //   if(fabs((des.v(1) + Kp(1) * x_pos_error) - odom.v(1))>1.0)
+  // ROS_ERROR("[px4ctrl] vel_error_y > 1.0 ");
+  // if(fabs(des.p(2) - odom.p(2))>1.0)
+  // ROS_ERROR("[px4ctrl] pos_error_z > 1.0 ");
+  // if(fabs((des.v(2) + Kp(2) * x_pos_error) - odom.v(2))>1.0)
+  // ROS_ERROR("[px4ctrl] vel_error_z > 1.0 ");
 
   debug.des_v_x = (des.v(0) + Kp(0) * x_pos_error); //debug
   debug.des_v_y = (des.v(1) + Kp(1) * y_pos_error);

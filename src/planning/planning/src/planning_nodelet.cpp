@@ -103,6 +103,7 @@ class Nodelet : public nodelet::Nodelet {
   bool perching_once =false;
   bool perching_replan_flag = false;
   bool exe_perching_flag = false;
+  bool using_cone=false;
 
   // NOTE planning for fake target
   bool fake_ = false;
@@ -868,7 +869,7 @@ void plan_timer_callback(const ros::TimerEvent& event) {
       }
       case LANDING:
       {
-        ROS_INFO("[planner] task state : LANDING");
+        ROS_INFO_ONCE("[planner] task state : LANDING");
 
         //! step 1 : obtain state of robot odom
         while (odom_lock_.test_and_set()) ;
@@ -957,9 +958,9 @@ void plan_timer_callback(const ros::TimerEvent& event) {
         if (perching_flag)
         {
             // 太靠近就悬停
-            ROS_INFO("[ perching planner ]dis_laser_mm : %d",dis_laser_mm);
+            // ROS_INFO("[ perching planner ]dis_laser_mm : %d",dis_laser_mm);
             static int count_laser = 0;
-            if( dis_laser_mm < 90 && dis_laser_mm > 5 ) // 如果底部激光探测到这个距离，说明接触到了物体，贴上去
+            if( dis_laser_mm < 82 && dis_laser_mm > 5 ) // 如果底部激光探测到这个距离，说明接触到了物体，贴上去
             {
               count_laser++;
               // ROS_WARN("laser count++! count_laser = %d",count_laser);
@@ -978,6 +979,8 @@ void plan_timer_callback(const ros::TimerEvent& event) {
             {
               // stop_motors(); //发布停止电机的消息
               ROS_WARN("[planner] has landed at the landing position");
+              in_landing_process(); // 保持低推力landed状态
+
               task_state=LANDED;
               break;
             }
@@ -995,29 +998,43 @@ void plan_timer_callback(const ros::TimerEvent& event) {
             //   ROS_WARN("[planner] HOVERING...");
             //   return;
             // }
-
-
-
-
             
-            Eigen::Vector3d dp = target_p + target_v * 0.03 - odom_p; // 假设匀速直线运动的目标未来位置到飞机当前位置的位移
-            
-            if(dp.norm()<2.0)
+            // Eigen::Vector3d dp = target_p + target_v * 0.05 - odom_p; // 假设匀速直线运动的目标未来位置到飞机当前位置的位移
+            Eigen::Vector3d dp = target_p - odom_p; 
+            // target_p.z()-= 0.05; 
+
+            static bool stop_replan =false;
+            if(dp.norm()<0.5)
             {
-                 ROS_INFO("[ perching planning ] close enough stop replanning");
-                 perching_replan_flag=false;
+              // perching_replan_flag=false;
+                 stop_replan=true;
+
             }
             else{
-               perching_replan_flag=true;
+                // stop_replan=false;
+                // perching_replan_flag=true;
             }
+
+            // if(perching_once &&  stop_replan)
+            // {
+            //     ROS_INFO("[ perching planning ] close enough stop replanning");
+            //     break;
+            // }
+
 
             if(perching_once && !perching_replan_flag)
             {
-              ROS_INFO("[ perching planning ] not replan");
-              // task_state=READY;
+              ROS_INFO_ONCE("[ perching planning ] set not replan");
               // perching_once = false;
               break;
             }
+
+            if(perching_once && stop_replan)
+            {
+              ROS_INFO("[ perching planning ] close enough not replan");
+              break;
+            }
+
 
             // if(perching_once && traj_poly_perching_.getTotalDuration()<=1.0) // 太近就不规划了
             // {
@@ -1032,62 +1049,95 @@ void plan_timer_callback(const ros::TimerEvent& event) {
             bool generate_new_traj_success = false;
             Trajectory_S4 traj;
 
-            ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.03); // 当成执行过程需要30ms
+            ros::Time replan_stamp = ros::Time::now() + ros::Duration(0.001); // 当成执行过程需要30ms
             double replan_t = (replan_stamp - replan_stamp_).toSec();
+
+            std::cout<<"replan_t : " << replan_t <<std::endl;
             
 
             iniState.setZero();
             if(replan_t > traj_poly_perching_.getTotalDuration()) // 一开始
+            // if(!perching_once)
             {
               iniState.col(0)=odom_p;
               iniState.col(1)=odom_v;
             }
             else  // 上次规划的当前时间点开始规划
             {
-              // iniState.col(0)=traj_poly_perching_.getPos(replan_t);
-              // iniState.col(1)=traj_poly_perching_.getVel(replan_t);
-              iniState.col(0)=odom_p + 0.03 * odom_v;
-              iniState.col(1)=odom_v;
+              ROS_INFO("[ not initial ]");
+              iniState.col(0)=traj_poly_perching_.getPos(replan_t);
+              iniState.col(1)=traj_poly_perching_.getVel(replan_t);
+              // iniState.col(0)=odom_p + 0.045* odom_v;
+              // iniState.col(1)=odom_v;
               iniState.col(2)=traj_poly_perching_.getAcc(replan_t);
               iniState.col(3)=traj_poly_perching_.getJer(replan_t);
             }
 
 
-            std::vector<Eigen::Vector3d> astar_path;
-            Eigen::Vector3d p_start = iniState.col(0);  // 开始位置
-            std::vector<Eigen::Vector3d> target_predcit; // 预测路径
-            std::vector<Eigen::MatrixXd> hPolys;
-            std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> keyPts;
+            // std::vector<Eigen::Vector3d> astar_path;
+            // Eigen::Vector3d p_start = iniState.col(0);  // 开始位置
+            // std::vector<Eigen::Vector3d> target_predcit; // 预测路径
+            // std::vector<Eigen::MatrixXd> hPolys;
+            // std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> keyPts;
             bool generate_perching_traj_success = false;
 
-            generate_perching_traj_success= prePtr_->predict(target_p, target_v, target_predcit); // 预测位置
-            generate_perching_traj_success = envPtr_->astar_search(p_start, target_predcit.back(), astar_path); // 从当前位置到预测的终点直接搜出一条Astar
-            envPtr_->generateSFC(astar_path, 2.0, hPolys, keyPts); // 沿着a星路径生成飞行走廊
-            envPtr_->visCorridor(hPolys);                    // 可视化飞行走廊
-            visPtr_->visualize_pairline(keyPts, "keyPts");
+            // generate_perching_traj_success= prePtr_->predict(target_p, target_v, target_predcit); // 预测位置
+            // generate_perching_traj_success = envPtr_->short_astar(p_start, target_predcit.back(), astar_path); // 从当前位置到预测的终点直接搜出一条Astar
+            // visPtr_->visualize_path(astar_path, "astar"); 
+
+
+
+            // envPtr_->generateSFC(astar_path, 2.0, hPolys, keyPts); // 沿着a星路径生成飞行走廊
+            // envPtr_->visCorridor(hPolys);                    // 可视化飞行走廊
+
+
+            // visPtr_->visualize_pairline(keyPts, "keyPts");
 
             replanStateMsg_.header.stamp = ros::Time::now(); // 记录上次replan的时间
             replanStateMsg_.iniState.resize(12);
             Eigen::Map<Eigen::MatrixXd>(replanStateMsg_.iniState.data(),3,4)= iniState;
 
 
+            // auto tic = std::chrono::steady_clock::now();
 
             // TODO trajopt里面加入臂障约束，应该是需要用到P的一个转换...
-            // generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,10,traj,true);
-          
-          
-            generate_perching_traj_success = trajPerchingOptPtr_->generate_traj_corridor(iniState,target_p,target_v,target_q,target_predcit,hPolys,traj,false);
+            if(!perching_once)
+              generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,10,traj,using_cone);
+            else
+              if(dp.norm()>1.0)
+                    generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,10,traj,using_cone,replan_t);
+              // else if(dp.norm()>0.5)
+                  // generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,5,traj,using_cone,replan_t);
+              else
+                  generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,5,traj,using_cone,replan_t);
+
+
+                            // generate_perching_traj_success = trajPerchingOptPtr_->generate_traj(iniState,target_p,target_v,target_q,10,traj,using_cone);
+
+
+            
+            // generate_perching_traj_success = trajPerchingOptPtr_->generate_traj_corridor(iniState,target_p,target_v,target_q,target_predcit,hPolys,traj,true);
+
+            // auto toc = std::chrono::steady_clock::now();
+            // std::cout << "optmization costs: " << (toc - tic).count() * 1e-6 << "ms" << std::endl;
 
             
           if (generate_perching_traj_success) {
+            ROS_INFO("[ perching planning ] trajectory generation success ! target_vel = %f",target_v.norm());
+
             //* 可视化
             visPtr_->visualize_traj(traj, "traj_perching"); // 可视化轨迹
             Eigen::Vector3d tail_pos = traj.getPos(traj.getTotalDuration()); // 可视化终点的位置和速度方向
             Eigen::Vector3d tail_vel = traj.getVel(traj.getTotalDuration());
+            Eigen::Vector3d tail_acc = traj.getAcc(traj.getTotalDuration());
+            Eigen::Vector3d g_(0, 0, -9.8);
+
             visPtr_->visualize_arrow(tail_pos, tail_pos + 0.5 * tail_vel, "tail_vel"); // 最后一个是把箭头消息发布到哪个话题上，估计rviz会订阅这个话题然后可视化出来
-            ROS_INFO("[ perching planning ] trajectory generation success ! ");
+            visPtr_->visualize_arrow(tail_pos, tail_pos + 0.5 * (tail_acc-g_), "tail_thrust",visualization::red); // 最后一个是把箭头消息发布到哪个话题上，估计rviz会订阅这个话题然后可视化出来
+
             ROS_WARN("[ perching planning] trajectory max vel : %f",traj.getMaxVelRate());
-            ROS_WARN("[ perching planning] trajectory tail vel : %f",traj.getVel(traj.getTotalDuration()));
+            ROS_WARN("[ perching planning] trajectory tail vel : %f",traj.getVel(traj.getTotalDuration()).norm());
+            ROS_WARN("[ perching planning] trajectory tail acc - g : %f",(tail_acc-g_).norm());
 
 
            //* 处理yaw角
@@ -1439,6 +1489,8 @@ void plan_timer_callback(const ros::TimerEvent& event) {
     int plan_hz = 10;
     
     nh.getParam("using_perching",perching_flag);
+        nh.getParam("using_cone",using_cone);
+
     nh.getParam("perching_replan_flag",perching_replan_flag);
     nh.getParam("exe_perching_flag",exe_perching_flag);
     nh.getParam("plan_hz", plan_hz);

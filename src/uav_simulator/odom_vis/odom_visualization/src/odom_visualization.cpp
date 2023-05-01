@@ -20,6 +20,8 @@
 using namespace arma;
 using namespace std;
 
+int count_marker=0;
+
 static string mesh_resource;
 static double color_r, color_g, color_b, color_a, cov_scale, scale;
 bool cross_config = false;
@@ -211,7 +213,13 @@ void odom_callback(const nav_msgs::Odometry::ConstPtr& msg) {
   meshROS.header.frame_id = _frame_id;
   meshROS.header.stamp = msg->header.stamp;
   meshROS.ns = "mesh";
-  meshROS.id = 0;
+  // if(count_marker ++ % 50 == 0)
+  // {
+  //   count_marker = 1;
+  //   meshROS.id +=1;
+  //   // std::cout<<"meshROS.id = "<<meshROS.id<<std::endl;
+  //   // std::cout<<"count_marker = "<<count_marker<<std::endl;
+  // }
   meshROS.type = visualization_msgs::Marker::MESH_RESOURCE;
   meshROS.action = visualization_msgs::Marker::ADD;
   meshROS.mesh_use_embedded_materials = true;
@@ -248,6 +256,7 @@ void odom_callback(const nav_msgs::Odometry::ConstPtr& msg) {
   meshROS.color.g = 0;
   meshROS.color.b = 0;
   meshROS.mesh_resource = mesh_resource;
+  meshROS.lifetime=ros::Duration(3.0);
   meshPub.publish(meshROS);
 
   // Pose
@@ -576,6 +585,7 @@ int main(int argc, char** argv) {
   n.param("covariance_position", cov_pos, false);
   n.param("covariance_velocity", cov_vel, false);
   n.param("covariance_color", cov_color, false);
+  meshROS.id=0;
 
   ros::Subscriber sub_odom = n.subscribe("odom", 100, odom_callback);
   ros::Subscriber sub_cmd = n.subscribe("cmd", 100, cmd_callback);

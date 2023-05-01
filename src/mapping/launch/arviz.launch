@@ -1,0 +1,11 @@
+<launch>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find mapping)/config/rviz_real.rviz">
+  </node>
+  <group ns="drone0">
+    <node name="mapping_vis" pkg="mapping" type="mapping_vis_node">
+      <remap from="~gridmap" to="gridmap"/>
+      <remap from="~gridmap_inflate" to="gridmap_inflate"/>
+      <param name="remove_floor_ceil" value="false"/>
+    </node>
+  </group>
+</launch>

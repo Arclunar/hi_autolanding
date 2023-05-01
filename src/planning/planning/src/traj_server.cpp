@@ -1,17 +1,22 @@
 #include <nav_msgs/Odometry.h>
 #include <quadrotor_msgs/PolyTraj.h>
 #include <quadrotor_msgs/PositionCommand.h>
+#include <quadrotor_msgs/TakeoffLand.h>
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
 #include <visualization_msgs/Marker.h>
+#include <visualization/visualization.hpp>
 
 #include <traj_opt/poly_traj_utils.hpp>
 
 ros::Publisher pos_cmd_pub_;
+ros::Publisher stop_motor_pub;
 ros::Time heartbeat_time_;
 bool receive_traj_ = false;
 
 bool exe_perching_flag= true;
+std::shared_ptr<visualization::Visualization> visPtr_; // 可视化， for debug
+ 
 
 // 保存两条路径
 quadrotor_msgs::PolyTraj trajMsg_, trajMsg_last_;
@@ -45,6 +50,11 @@ void publish_cmd(int traj_id, // 执行的路径的编号
   pos_cmd_pub_.publish(cmd);
   last_p_ = p;
 }
+
+Eigen::Vector3d final_p;
+Eigen::Vector3d final_v;
+Eigen::Vector3d final_a;
+double final_yaw = 0;
 
 // 执行路径
 bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
@@ -104,6 +114,7 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
       p = traj.getPos(t);
       v = traj.getVel(t);
       a = traj.getAcc(t);
+      
       // NOTE yaw
       double yaw = trajMsg.yaw;
       double d_yaw = yaw - last_yaw_;
@@ -114,6 +125,14 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
         yaw = last_yaw_ + d_yaw / d_yaw_abs * 0.02; // yaw的变化率不超过0.02
       }
       publish_cmd(trajMsg.traj_id, p, v, a, yaw, 0);  // TODO yaw
+      visPtr_->visualize_a_ball(p,0.05,"position_cmd_vis");
+      visPtr_->visualize_arrow(p,p+0.2*v,"position_vel_cmd_vis");
+
+      final_p = p;
+      final_v = v;
+      final_a = a;
+      final_yaw= yaw;
+
       last_yaw_ = yaw;
       return true;
 
@@ -134,7 +153,7 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
       }
       Trajectory_S4 traj(dura,cMats);
       if (t > traj.getTotalDuration()) { // 生成的轨迹持续时间太短了，现在已经过了规划的时间段了
-        ROS_ERROR_ONCE("[traj_server] trajectory too short left!");
+        ROS_ERROR("[traj_server] trajectory too short left!");
         return false;
       }
       Eigen::Vector3d p, v, a; // 获取当前时间的p,v,a,j
@@ -150,8 +169,16 @@ bool exe_traj(const quadrotor_msgs::PolyTraj &trajMsg) {
       if (d_yaw_abs >= 0.02) {
         yaw = last_yaw_ + d_yaw / d_yaw_abs * 0.02; // yaw的变化率不超过0.02
       }
-      if(exe_perching_flag)
+      if(exe_perching_flag){
         publish_cmd(trajMsg.traj_id, p, v, a, yaw, 0);  // TODO yaw
+        visPtr_->visualize_a_ball(p,0.05,"position_cmd_vis");
+        visPtr_->visualize_arrow(p,p+0.2*v,"position_vel_cmd_vis");
+        final_p = p;
+        final_v = v;
+        final_a = a;
+        final_yaw= yaw;
+
+      }
       last_yaw_ = yaw;
       return true;
     }
@@ -177,7 +204,7 @@ void polyTrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
 void cmdCallback(const ros::TimerEvent &e) {
   if (!receive_traj_) { //  没收到规划出来的路径
-    // ROS_INFO("[Traj server]:cmdCallback not received traj");
+    ROS_INFO("[Traj server]:cmdCallback not received traj");
     return;
   }
   ros::Time time_now = ros::Time::now();
@@ -193,8 +220,28 @@ void cmdCallback(const ros::TimerEvent &e) {
   } else if (exe_traj(trajMsg_last_)) { // 执行失败则执行上次节点，失败原因有轨迹有问题，轨迹不够长
     return;
   }
-  // ROS_ERROR_ONCE("[traj server] traj received invalid!");
-  // publish_cmd(trajMsg_.traj_id, last_p_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 0, 0);  // TODO yaw
+  // ROS_ERROR("[traj server] traj received invalid!");
+  // publish_cmd(trajMsg_.traj_id, last_p_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), last_yaw_, 0);  // TODO yaw
+  // 发停机指令
+
+  if(trajMsg_last_.order == 7)
+  {
+    //   ROS_ERROR("[traj server] traj received invalid! kill motors");
+
+      ROS_ERROR("[traj server] go on !");
+
+    publish_cmd(trajMsg_.traj_id, final_p, final_v, final_a, final_yaw, 0);  // TODO yaw 往前跑
+    final_p = final_p + final_v * 0.01;
+    visPtr_->visualize_a_ball(final_p,0.05,"position_cmd_vis");
+    visPtr_->visualize_arrow(final_p,final_p+0.2*final_v,"position_vel_cmd_vis");
+
+    trajMsg_.traj_id+=1;
+    // quadrotor_msgs::TakeoffLand killmoter_msg;
+    // killmoter_msg.takeoff_land_cmd=killmoter_msg.KILLMOTOR;
+    // stop_motor_pub.publish(killmoter_msg);
+  }
+
+  // hovering
 }
 
 int main(int argc, char **argv) {
@@ -202,13 +249,16 @@ int main(int argc, char **argv) {
   ros::NodeHandle nh("~");
   nh.getParam("exe_perching_flag",exe_perching_flag);
 
-
+  visPtr_ = std::make_shared<visualization::Visualization>(nh); // 可视化
   ros::Subscriber poly_traj_sub = nh.subscribe("trajectory", 10, polyTrajCallback); //订阅规划出来的多项式
   ros::Subscriber heartbeat_sub = nh.subscribe("heartbeat", 10, heartbeatCallback); // 订阅心跳信号
 
   pos_cmd_pub_ = nh.advertise<quadrotor_msgs::PositionCommand>("position_cmd", 50); // 发布控制指令
 
   ros::Timer cmd_timer = nh.createTimer(ros::Duration(0.01), cmdCallback); // 每0.01s执行一次
+
+
+  stop_motor_pub = nh.advertise<quadrotor_msgs::TakeoffLand>("/px4ctrl/takeoff_land",10);
 
   ros::Duration(1.0).sleep();
 

@@ -22,32 +22,34 @@
       <param name="ctrl_hz" value="50"/>
 
       <param name="K" value="8"/>
-      <param name="vmax" value="6.0"/>
-      <param name="amax" value="4.5"/>
+      <param name="vmax" value="7.0"/>
+      <param name="amax" value="3.0"/>
 
       <!-- perching -->
       <!-- 空间在 /drone0/planning/* -->
       <param name="K_perching" value="16"/>
-      <param name="vmax_perching" value="6.0"/>
-      <param name="amax_perching" value="4.0"/>
+      <param name="vmax_perching" value="4.5"/>
+      <param name="amax_perching" value="6.0"/>
       <param name="using_perching" value="true"/>
-      <param name="thrust_max" value="17.0"/>
-      <param name="thrust_min" value="5.0"/>
-      <param name="omega_max" value="1.0"/>
+      <param name="thrust_max" value="20.0"/>
+      <param name="thrust_min" value="2.0"/>
+      <param name="omega_max" value="3.5"/>
       <param name="omega_yaw_max" value="0.5"/>
-      <param name="v_plus" value="0.5"/>
-      <param name="robot_l" value="0.00"/>
-      <param name="robot_r" value="0.2"/>
-      <param name="platform_r" value="1.0"/>
-      <param name="rhoVt" value="100000.0"/>
+      <param name="v_plus" value="0.3"/>
+      <param name="robot_l" value="0.07"/>
+      <param name="robot_r" value="1.0"/>
+      <param name="platform_r" value="1.5"/>
+      <param name="rhoVt" value="1000000.0"/>
+            <!-- <param name="rhoVt" value="-2.0"/> -->
+
       <param name="rhoThrust" value="10000.0"/>
       <param name="rhoOmega" value="100000.0"/>
-      <param name="rhoPerchingCollision" value="1000000.0"/>
+      <param name="rhoPerchingCollision" value="10000000.0"/>
       <param name="rhoLanding" value="100000000.0"/>
       <param name="pause_debug" value="false"/>
-      <param name="theta_cone" value="0.3"/>
-      <param name="landing_circle" value="2.3"/>
-      <param name="landing_ld" value="0.8"/>
+      <param name="theta_cone" value="0.2"/>
+      <param name="landing_circle" value="2.0"/>
+      <param name="landing_ld" value="0.4"/>
       <param name="using_cone" value="true"/>
       <param name="rhoT_perching" value="100000.0"/>
       <param name="rhoP_perching" value="10000000.0"/>
@@ -56,19 +58,19 @@
       <param name="perching_replan_flag" value="true"/>
 
       <param name="rhoT" value="100.0"/>
-      <param name="rhoP" value="10000.0"/>
+      <param name="rhoP" value="100000.0"/>
       <param name="rhoV" value="1000.0"/>
-      <param name="rhoA" value="1000.0"/>
+      <param name="rhoA" value="10000.0"/>
       <param name="rhoTracking" value="1000.0"/>
       <param name="rhosVisibility" value="10000.0"/>
       <param name="theta_clearance" value="0.6"/>
       <param name="clearance_d" value="0.2"/>
       <param name="tolerance_d" value="0.2"/>
-      <param name="tracking_dist" value="5.0"/>
-      <param name="tracking_dur" value="3.0"/>
+      <param name="tracking_dist" value="1.5"/>
+      <param name="tracking_dur" value="5.0"/>
       <!-- 预测的时间 -->
       <param name="tracking_dt" value="0.2"/>
-      <param name="tracking_z" value="6"/> 
+      <param name="tracking_z" value="3"/> 
       <param name="debug" value="false"/>
       <param name="fake" value="false"/>
 

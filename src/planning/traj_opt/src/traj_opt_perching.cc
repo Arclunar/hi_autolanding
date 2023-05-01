@@ -14,6 +14,7 @@ static Eigen::Vector3d land_v_;
 // 降落时的切向分量基底
 static Eigen::Vector3d v_t_x_, v_t_y_;
 
+static Eigen::MatrixXd init_P;
 static Trajectory_S4 init_traj_;
 static double init_tail_f_;
 static Eigen::Vector2d init_vt_;
@@ -360,7 +361,7 @@ static inline double objectiveFunc(void* ptrObj, // 优化对象
   addLayerThrust(tail_f, grad_thrust, grad_f); //计算关于f的梯度， f是优化的f，把结果计算在grad_f中
   // grad_f = thrust_half_ * cos(f) * grad_thrust;
 
-  // 切向速度的正则项系数，正则项直接就是vt的范数，很简单
+  // 切向速度的正则项系数，正则项直接就是vt的范数，很简单，貌似可以很简单地删掉，只要设成小于-1，就会一直为0不变
   if (obj.rhoVt_ > -1) {
     grad_vt.x() = grad_tailV.dot(v_t_x_);
     grad_vt.y() = grad_tailV.dot(v_t_y_);
@@ -398,6 +399,18 @@ static inline double objectiveFunc_corridor(void* ptrObj,
       Eigen::Map<const Eigen::Vector2d> vt(x + obj.dim_t_ + obj.dim_p_ + 1); // 末端切线速度
       Eigen::Map<Eigen::Vector2d> grad_vt(grad + obj.dim_t_ + obj.dim_p_ + 1); // 末端切向速度梯度
 
+      // ROS_WARN("[ objectiveFunc_corridor ] test1");
+
+      // std::cout<<"x[0]:"<<x[0]<<std::endl;
+      // std::cout<<"x[1]:"<<x[1]<<std::endl;
+      // std::cout<<"x[2]:"<<x[2]<<std::endl;
+      // std::cout<<"x[3]:"<<x[3]<<std::endl;
+
+      // std::cout<<"vt:"<<vt<<std::endl;
+
+
+
+
       double dT = expC2(t); // dT是实际的一段内的时间
 
       Eigen::Vector3d tailV, grad_tailV;
@@ -414,11 +427,18 @@ static inline double objectiveFunc_corridor(void* ptrObj,
       tailS.col(2) = forward_thrust(tail_f) * tail_q_v_ + g_; // 末端加速度，推力方向要求和降落平台垂直
       tailS.col(3).setZero(); // jerk
 
+      // ROS_WARN("[ objectiveFunc_corridor ] test2");
+
+
       obj.mincoOpt_.generate(obj.initS_, tailS, P, dT); // 生成系数,为了获得cost
+
+      // ROS_WARN("[ objectiveFunc_corridor ] test3");
+
 
       double cost = obj.mincoOpt_.getTrajSnapCost(); // 获得snap的cost，套公式
 
       obj.mincoOpt_.calGrads_CT(); // 计算对CT的导数，没改
+      // ROS_WARN("[ objectiveFunc_corridor ] test4");
 
       obj.addTimeIntPenalty(cost); // 计算时间积分，这里改了
       obj.mincoOpt_.calGrads_PT(); // 没改
@@ -427,6 +447,8 @@ static inline double objectiveFunc_corridor(void* ptrObj,
       grad_tailV = obj.mincoOpt_.gdTail.col(1); 
       double grad_thrust = obj.mincoOpt_.gdTail.col(2).dot(tail_q_v_); //获得目标函数对末段推力的梯度，为什么这么算呢，tail_q_v_是平台垂直法向量
       addLayerThrust(tail_f, grad_thrust, grad_f); //计算关于f的梯度， f是优化的f，把结果计算在grad_f中
+
+      // ROS_WARN("[ objectiveFunc_corridor ] test5");
 
       if (obj.rhoVt_ > -1) {
       grad_vt.x() = grad_tailV.dot(v_t_x_);
@@ -565,13 +587,16 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
                             const Eigen::Quaterniond& land_q,
                             const std::vector<Eigen::Vector3d>& target_predcit,
                             const std::vector<Eigen::MatrixXd>& hPolys,
-                          Trajectory_S4& traj,bool using_cone_,const double& t_replan) {
+                             Trajectory_S4& traj,bool using_cone_,const double& t_replan) {
 
     //获得凸包
     cfgHs_ = hPolys;
     if (cfgHs_.size() == 1) {
+      ROS_WARN("only one cfgHs");
       cfgHs_.push_back(cfgHs_[0]);//再来一个
     }
+
+    // ROS_WARN("[ generate traj corridor ] test1");
 
     // 变成V表示
     if (!extractVs(cfgHs_, cfgVs_)) {
@@ -581,14 +606,18 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
 
     N_ = 2 * cfgHs_.size(); // 一个走廊里有2个多项式
 
-    using_cone = using_cone_;
+    std::cout<<"N_:"<<N_<<std::endl;
 
+
+    mincoOpt_.reset(N_);  // 初始化
+
+
+    using_cone = using_cone_;
 
     // 初始条件
     initS_ = iniState;
     car_p_ =car_p;
     car_v_ = car_v;
-
 
     // 末段条件
     q2v(land_q, tail_q_v_); 
@@ -612,6 +641,7 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
     }
 
     p_.resize(dim_p_);
+    // std::cout<<"dim_p_ : "<<dim_p_<<std::endl;
 
     x_ = new double[dim_t_ + dim_p_ + 1 + 2];  // 1: tail thrust; 2: tail vt
 
@@ -627,17 +657,51 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
     tracking_ps_ = target_predcit; // 只用到预测的位置
 
     //初始化一个时间T，然后变成t 
-    double init_T = (initS_.col(0) - car_p).norm() / vmax_ ;
-    t = logC2(init_T / N_ ); 
+    if(!initial_guess_)
+    {
+      double init_T = (initS_.col(0) - car_p).norm() / vmax_ +0.5 ;
+      std::cout<<"init_T : "<<init_T<<std::endl;
+      t = logC2(init_T / N_ ); 
+      vt=init_vt_;
+      tail_f=init_tail_f_;
+    }
+    else
+    {
+          vt.setConstant(0.0);
+          tail_f=0;
+
+        double init_T = init_traj_.getTotalDuration();
+        std::cout<<"init_T : "<<init_T<<std::endl;
+
+        t = logC2(init_T/ N_);
+    }
+
+    std::vector<Eigen::Vector3d> P_list;
+    Eigen::Vector3d temp_vec;
 
     // 初始化航点
     for(int i=0;i<N_-1;++i)
     {
       int k = cfgVs_[i].cols() - 1;
       P.col(i) = cfgVs_[i].rightCols(k).rowwise().sum() / (1.0 + k) + cfgVs_[i].col(0); // 从这里得到初始的位置
+      std::cout<<"P_col("<<i<<")="<<std::endl<<P.col(i)<<std::endl;
+      // visPtr_->visualize_a_ball(P.col(i),0.05,"ps_of_corridor");
+      temp_vec.x()=P.col(i).x();
+      temp_vec.y()=P.col(i).y();
+      temp_vec.z()=P.col(i).z();
+      P_list.push_back(temp_vec);
     }
+
+    visPtr_->visualize_path(P_list,"ps_of_corridor");
+    // visPtr_->visualize_arrow(P.col(0),P.col(1),"ps_of_corridor");
+    // visPtr_->visualize_balls(P_list,"ps_of_corridor");
+
+
     backwardP(P, cfgVs_, p_);
     p = p_;
+
+    // ROS_WARN("[ generate traj corridor ] test2");
+
 
     // 初始化末段切向速度
     vt.setConstant(0.0);
@@ -670,6 +734,7 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
     // 获得轨迹
     double dT = expC2(t);
     double T = N_ * dT; 
+    std::cout<<"traj T : "<<T<<std::endl;
     Eigen::Vector3d tailV;
     forwardTailV(vt, tailV); 
     Eigen::MatrixXd tailS(3, 4);
@@ -677,6 +742,17 @@ bool TrajOpt_perching::generate_traj_corridor(const Eigen::MatrixXd& iniState,
     tailS.col(1) = tailV; 
     tailS.col(2) = forward_thrust(tail_f) * tail_q_v_ + g_; 
     tailS.col(3).setZero();
+
+    for(int i=0;i<P.cols();i++)
+  {
+      temp_vec.x()=P(0,i);
+      temp_vec.y()=P(1,i);
+      temp_vec.z()=P(2,i);
+      P_list.push_back(temp_vec);
+  }
+
+  visPtr_->visualize_path(P_list,"ps_of_corridor_opt");
+
 
     mincoOpt_.generate(initS_, tailS, P, dT); // 根据waypoint，时间分配、初始和末端状态生成轨迹，也就是得到参数
     traj = mincoOpt_.getTraj(); 
@@ -807,7 +883,7 @@ bool TrajOpt_perching::generate_traj(const Eigen::MatrixXd& iniState,
       std::vector<CoefficientMat_S4> coeffs{coeffMat}; //一堆系数
       Trajectory_S4 traj(durs, coeffs); // 根据系数生成轨迹
       max_omega = getMaxOmega(traj);
-    } while (max_omega > 1.3 * omega_max_); // 原来1.5
+    } while (max_omega > 1.5 * omega_max_); // 原来1.5
 
 
   // ？ 
@@ -885,6 +961,19 @@ bool TrajOpt_perching::generate_traj(const Eigen::MatrixXd& iniState,
   // std::cout << tailS << std::endl;
 
   
+  std::vector<Eigen::Vector3d> P_list;
+  Eigen::Vector3d temp_vec;
+
+  for(int i=0;i<P.cols();i++)
+  {
+      temp_vec.x()=P(0,i);
+      temp_vec.y()=P(1,i);
+      temp_vec.z()=P(2,i);
+      P_list.push_back(temp_vec);
+  }
+  visPtr_->visualize_path(P_list,"ps_of_corridor");
+
+
   mincoOpt_.generate(initS_, tailS, P, dT); // 根据waypoint，时间分配、初始和末端状态生成轨迹，也就是得到参数
   traj = mincoOpt_.getTraj(); 
 
@@ -1187,7 +1276,7 @@ bool TrajOpt_perching::grad_cost_omega_yaw(const Eigen::Vector3d& a,
 bool TrajOpt_perching::grad_cost_floor(const Eigen::Vector3d& p,
                               Eigen::Vector3d& gradp,
                               double& costp) {
-  static double z_floor = 0.4;
+  static double z_floor = 1.53;
   double pen = z_floor - p.z(); // 惩罚项
   if (pen > 0) { // 需要惩罚
     double grad = 0; 

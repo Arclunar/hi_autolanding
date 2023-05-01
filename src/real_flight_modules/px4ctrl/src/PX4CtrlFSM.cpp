@@ -379,7 +379,7 @@ void PX4CtrlFSM::process()
 			float thrust_k = 1.0;
 			if(laser_data.laser_ground_mm <= 80)
 			{
-				thrust_k = 0.4;
+				thrust_k = 0.0;
 			}
 			else if(laser_data.laser_ground_mm > 70 && laser_data.laser_ground_mm < 80) // 太高就降了
 			{

@@ -72,7 +72,7 @@
     </spherical_coordinates>
 
   <!-- 加入风速插件 -->
-    <plugin name='wind_plugin' filename='libgazebo_wind_plugin.so'>
+    <!-- <plugin name='wind_plugin' filename='libgazebo_wind_plugin.so'>
       <frameId>base_link</frameId>
       <robotNamespace/>
         <windVelocityMean>0.0</windVelocityMean>
@@ -88,7 +88,7 @@
         <windGustDirectionMean>1 0 0</windGustDirectionMean>
         <windGustDirectionVariance>0</windGustDirectionVariance>
         <windPubTopic>world_wind</windPubTopic>
-    </plugin>
+    </plugin> -->
 
 
 

@@ -2,13 +2,13 @@
 # ⭐⭐⭐  Set parameters carefully for satisfied performance!   ⭐⭐⭐ #
 #########################################################################
 
-mass        : 1.6 # kg 
+mass        : 1.8 # kg 
 gra         : 9.81 
-pose_solver : 1     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang, 2:From rotor-drag    
+pose_solver : 0     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 100.0
 use_bodyrate_ctrl: false
 max_manual_vel: 1.0
-max_angle: -0.1  # Attitude angle limit in degree. A negative value means no limit.
+max_angle: 80  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 13.2 # 4S battery
 
 rc_reverse: #
@@ -38,19 +38,22 @@ thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(
 
 gain: 
     # Cascade PID controller. Recommend to read the code. // 调这里 ，用debug模式调吧,这里是p项
-    Kp0: 3.0
-    Kp1: 3.0
-    Kp2: 3.0
+    Kp0: 3.1
+    Kp1: 3.1
+    Kp2: 1.9
+    Kpd0: 90.0
+    Kpd1: 90.0
+    Kpd2: 90.0
     Kv0: 3.0
     Kv1: 3.0
     Kv2: 3.0
-    # ↓↓↓ No use now --
-    Kvi0: 0.0
-    Kvi1: 0.0
-    Kvi2: 0.0
     Kvd0: 0.0
     Kvd1: 0.0
     Kvd2: 0.0
+    Kvi0: 0.0
+    Kvi1: 0.0
+    Kvi2: 0.0
+
     # ↓↓↓ Only used in rate control mode.
     KAngR: 20.0
     KAngP: 20.0

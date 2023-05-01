@@ -17,13 +17,17 @@ ros::Publisher _vel_traj_vis_pub;
 ros::Publisher _acc_traj_vis_pub;
 ros::Publisher real_traj_vis_pub;
 ros::Publisher real_traj_line_vis_pub;
+ros::Publisher real_vel_vis_pub; // 飞机的真实速度
 ros::Subscriber traj_msg_sub;
 ros::Subscriber robot_state_sub; // 获取飞机的位置
+
 visualization_msgs::Marker pos_marker;
 visualization_msgs::Marker vel_marker;
 visualization_msgs::Marker acc_marker;
 visualization_msgs::Marker real_pos_marker;
 visualization_msgs::Marker real_traj_marker;
+visualization_msgs::Marker real_vel_marker;
+
 
 quadrotor_msgs::PolyTraj trajMsg;
 ros::ServiceClient state_client;
@@ -70,6 +74,7 @@ int main(int argc, char *argv[])
 
     real_traj_vis_pub  = nh.advertise<visualization_msgs::Marker>("traj_vis_real",1);
     real_traj_line_vis_pub  = nh.advertise<visualization_msgs::Marker>("traj_vis_real_line",1);
+    real_vel_vis_pub  = nh.advertise<visualization_msgs::Marker>("vel_vis_real_line",1);
 
 
     // 初始化marker
@@ -109,6 +114,17 @@ int main(int argc, char *argv[])
     //     traj_pub_ = nh.advertise<quadrotor_msgs::PolyTraj>("trajectory", 1); // 发布轨迹消息给traj server，traj_pub_
 
     // 功能2 订阅目标位置，直接在planning_nodelet上实现吧
+
+    // 真实速度
+    real_vel_marker.type = visualization_msgs::Marker::ARROW;
+    real_vel_marker.action = visualization_msgs::Marker::ADD;
+    real_vel_marker.header.frame_id = "world";
+    real_vel_marker.id = 0;
+    real_vel_marker.points.resize(2);
+    setMarkerScale(real_vel_marker, 0.05, 0.1, 0);
+    setMarkerColor(real_vel_marker, 1,1,0,0); // red
+
+
     ros::spin();
 
 }
@@ -133,6 +149,22 @@ void real_state_timer_callback(const ros::TimerEvent& event)
         pos.x=srv.response.pose.position.x;
         pos.y=srv.response.pose.position.y;
         pos.z=srv.response.pose.position.z;
+        geometry_msgs::Point vel;
+        vel.x=srv.response.twist.linear.x;
+        vel.y=srv.response.twist.linear.y;
+        vel.z=srv.response.twist.linear.z;
+
+        real_vel_marker.points[0].x = pos.x;
+        real_vel_marker.points[0].y = pos.y;
+        real_vel_marker.points[0].z = pos.z;
+
+        real_vel_marker.points[1].x = pos.x + 0.1 * vel.x;
+        real_vel_marker.points[1].y = pos.y + 0.1 * vel.y;
+        real_vel_marker.points[1].z = pos.z + 0.1 * vel.z;
+        real_vel_marker.id +=1;
+        // if(real_vel_marker.id % 5 ==0)
+            real_vel_vis_pub . publish(real_vel_marker);
+  
         real_traj_marker.points.push_back(pos);
         real_traj_line_vis_pub.publish(real_traj_marker);
         
@@ -150,7 +182,7 @@ void real_state_timer_callback(const ros::TimerEvent& event)
 void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
     trajMsg = *msgPtr; // 更新轨迹消息
     
-    ROS_WARN("[traj_vis] traj_msg received");
+    // ROS_WARN("[traj_vis] traj_msg received");
 
     if(trajMsg.order==5)
     {
@@ -236,10 +268,10 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
     }
     _vel_traj_vis_pub.publish(vel_list_msg);
-    ROS_WARN("[traj_vis] vel_list_msg published");
+    // ROS_WARN("[traj_vis] vel_list_msg published");
 
     _acc_traj_vis_pub.publish(acc_list_msg);
-    ROS_WARN("[traj_vis] acc_list_msg published");
+    // ROS_WARN("[traj_vis] acc_list_msg published");
     }
 
     if(trajMsg.order==7)
@@ -326,10 +358,10 @@ void TrajCallback(const quadrotor_msgs::PolyTrajConstPtr &msgPtr) {
 
     }
     _vel_traj_vis_pub.publish(vel_list_msg);
-    ROS_WARN("[traj_vis] vel_list_msg published");
+    // ROS_WARN("[traj_vis] vel_list_msg published");
 
     _acc_traj_vis_pub.publish(acc_list_msg);
-    ROS_WARN("[traj_vis] acc_list_msg published");
+    // ROS_WARN("[traj_vis] acc_list_msg published");
     }
 
 }

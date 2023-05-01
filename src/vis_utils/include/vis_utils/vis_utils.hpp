@@ -198,7 +198,10 @@ class VisUtils {
     marker.action = visualization_msgs::Marker::ADD;
     for (const auto& ball : balls) {
       setMarkerPose(marker, ball[0], ball[1], ball[2]);
-      auto d = 2 * ball.r;
+      // auto d = 2 * ball.r;
+      auto d = 2 * 0.2;
+
+    
       setMarkerScale(marker, d, d, d);
       marker_array.markers.push_back(marker);
       marker.id++;
